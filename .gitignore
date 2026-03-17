@@ -1,0 +1,44 @@
+# 环境变量（含 API Key，绝对不能上传）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 辩论历史记录（本地数据）
+debate_history/
+
+# 导出的 Word 文件
+*.docx
+
+# 角色配置（可选，如果想共享角色配置则删除此行）
+# agent_config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Streamlit
+.streamlit/secrets.toml
