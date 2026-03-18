@@ -508,7 +508,7 @@ if run_debate:
     st.session_state.debate_history.extend(batch)
     st.session_state.pending_user_speech = None  # 清除已处理的插嘴
     auto_save()
-    st.success(f"✅ 第{r}轮完成（已自动保存）")
+    st.rerun()
 
 if interrupt:
     st.session_state.debate_round += 1
@@ -538,7 +538,7 @@ if interrupt:
         current_target = {"name": attacker["name"], "content": content}
     st.session_state.debate_history.extend(batch)
     auto_save()
-    st.success("✅ 自由辩环节完成（已自动保存）")
+    st.rerun()
 
 if do_summary:
     st.subheader("📊 最终决策总结")
