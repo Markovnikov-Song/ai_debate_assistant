@@ -47,7 +47,8 @@ defaults = {
     "topic": "", "user_context": "", "debate_history": [],
     "debate_round": 0, "current_history_id": None,
     "custom_agents": [], "interrupt_rounds": 3,
-    "last_summary": "",   # 存最新一次总结
+    "last_summary": "",
+    "pending_user_speech": None,  # 待注入的用户插嘴 {target, content}
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -114,6 +115,33 @@ SUMMARIZER_PROMPT = """
 3. **最终综合建议**：给出明确的决策方向（支持/反对/折中），贴合用户的具体场景。
 4. **决策依据**：列出3-5条支持该建议的核心论据。
 格式：用中文数字分点，最重要的结论必须加粗，语言简洁。
+"""
+
+
+def get_user_speech_prompt(agent_prompt, agent_name, target_name, user_content, is_targeted: bool):
+    """用户插嘴后各角色的回应 prompt"""
+    if is_targeted:
+        # 被用户点名的角色：必须先回应用户
+        return agent_prompt + f"""
+【本轮特殊规则】
+用户直接向你（{agent_name}）提出了质疑：
+"{user_content}"
+要求：
+1. 必须先正面回应用户的质疑，不能回避
+2. 回应完后可以继续阐述自己的立场
+3. 核心反驳点必须加粗
+4. 控制在150字以内
+"""
+    else:
+        # 其他角色：看到用户质疑了某人，可以借势发挥
+        return agent_prompt + f"""
+【本轮背景】
+用户刚才向{target_name}提出了质疑："{user_content}"
+你可以：
+1. 借用户的质疑来支持或补充自己的立场
+2. 也可以反驳用户的质疑（如果你支持{target_name}的观点）
+3. 正常回应本轮辩论内容
+4. 核心观点必须加粗，控制在150字以内
 """
 
 # ===================== 存储函数 =====================
@@ -212,8 +240,12 @@ def export_to_word():
         doc.add_heading(f"第{r}轮", level=2)
         for item in [x for x in st.session_state.debate_history if x["round"] == r]:
             p = doc.add_paragraph()
-            p.add_run(f"{item['name']}：").bold = True
-            p.add_run(item["content"].replace("**", ""))
+            if item["type"] == "user_speech":
+                p.add_run(f"【用户插嘴 → {item.get('target','')}】：").bold = True
+                p.add_run(item["content"].replace("**", ""))
+            else:
+                p.add_run(f"{item['name']}：").bold = True
+                p.add_run(item["content"].replace("**", ""))
             doc.add_paragraph()
     if st.session_state.last_summary:
         doc.add_heading("三、决策总结", level=1)
@@ -261,16 +293,24 @@ def format_history_recent(hist, last_n_rounds=2):
     if not hist: return ""
     max_r  = max(x["round"] for x in hist)
     cutoff = max(1, max_r - last_n_rounds + 1)
-    return "".join(
-        f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n"
-        for x in hist if x["round"] >= cutoff and x["type"] == "agent_speech"
-    )
+    lines = []
+    for x in hist:
+        if x["round"] < cutoff:
+            continue
+        if x["type"] == "agent_speech":
+            lines.append(f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n")
+        elif x["type"] == "user_speech":
+            lines.append(f"第{x['round']}轮 - 【用户插嘴{x.get('target','')}】：{x['content']}\n\n")
+    return "".join(lines)
 
 def format_history_full(hist):
-    return "".join(
-        f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n"
-        for x in hist if x["type"] == "agent_speech"
-    )
+    lines = []
+    for x in hist:
+        if x["type"] == "agent_speech":
+            lines.append(f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n")
+        elif x["type"] == "user_speech":
+            lines.append(f"第{x['round']}轮 - 【用户插嘴{x.get('target','')}】：{x['content']}\n\n")
+    return "".join(lines)
 
 def call_llm(prompt, history_context="", max_tokens=400):
     context = f"核心辩论议题：{st.session_state.topic}\n"
@@ -313,12 +353,47 @@ st.session_state.user_context = st.text_area(
 has_topic   = bool(st.session_state.topic)
 has_history = bool(st.session_state.debate_history)
 
-# 开始/继续合并为一个按钮
 btn_label = "🚀 开始辩论" if st.session_state.debate_round == 0 else "🔁 继续辩论"
 c1, c2, c3 = st.columns(3)
 with c1: run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic)
 with c2: interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
 with c3: do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history)
+
+# ===================== 用户插嘴区（有辩论历史时显示） =====================
+if has_history:
+    with st.expander("💬 我要插嘴", expanded=bool(st.session_state.pending_user_speech)):
+        agent_names = [a["name"] for a in st.session_state.custom_agents]
+        target = st.selectbox("针对谁说？", ["全体"] + agent_names, key="user_speech_target")
+        user_input = st.text_area("你的观点", height=80, placeholder="输入你想说的，下一轮 AI 会回应你...",
+                                  key="user_speech_input")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("✅ 提交发言", use_container_width=True):
+                if user_input.strip():
+                    st.session_state.pending_user_speech = {
+                        "target":  target,
+                        "content": user_input.strip(),
+                        "round":   st.session_state.debate_round,
+                    }
+                    st.session_state.debate_history.append({
+                        "type":    "user_speech",
+                        "round":   st.session_state.debate_round,
+                        "name":    "用户",
+                        "target":  target,
+                        "content": f"（对{target}）{user_input.strip()}",
+                    })
+                    st.success("发言已提交，点击「继续辩论」让 AI 回应你")
+                else:
+                    st.warning("请输入内容")
+        with col_b:
+            if st.button("🗑️ 取消发言", use_container_width=True):
+                st.session_state.pending_user_speech = None
+                # 移除最后一条 user_speech
+                st.session_state.debate_history = [
+                    x for x in st.session_state.debate_history
+                    if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
+                ]
+                st.rerun()
 
 st.divider()
 
@@ -404,17 +479,35 @@ if run_debate:
     r        = st.session_state.debate_round
     is_first = (r == 1)
     hist_ctx = format_history_recent(st.session_state.debate_history)
+    user_speech = st.session_state.pending_user_speech  # 取出待处理的用户发言
+
     st.subheader(f"📢 第{r}轮辩论")
+
+    # 如果有用户插嘴，先展示出来
+    if user_speech:
+        st.info(f"💬 用户（针对{user_speech['target']}）：{user_speech['content']}")
+
     batch = []
     for agent in st.session_state.custom_agents:
         st.markdown(f"### 🗣 {agent['name']}")
         with st.spinner("思考中..."):
-            content = call_llm(get_debate_prompt(agent["prompt"], is_first_round=is_first), hist_ctx)
+            if user_speech:
+                is_targeted = (user_speech["target"] == agent["name"] or user_speech["target"] == "全体")
+                prompt = get_user_speech_prompt(
+                    agent["prompt"], agent["name"],
+                    user_speech["target"], user_speech["content"],
+                    is_targeted
+                )
+            else:
+                prompt = get_debate_prompt(agent["prompt"], is_first_round=is_first)
+            content = call_llm(prompt, hist_ctx)
         st.markdown(content)
         st.divider()
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
+
     st.session_state.debate_history.extend(batch)
-    auto_save()  # 自动保存
+    st.session_state.pending_user_speech = None  # 清除已处理的插嘴
+    auto_save()
     st.success(f"✅ 第{r}轮完成（已自动保存）")
 
 if interrupt:
@@ -473,9 +566,12 @@ if st.session_state.debate_history:
         items = [x for x in st.session_state.debate_history if x["round"] == r]
         with st.expander(f"第{r}轮", expanded=(r == st.session_state.debate_round)):
             for it in items:
-                st.markdown(f"**{it['name']}**")
-                st.markdown(it["content"])
-                st.markdown("---")
+                if it["type"] == "user_speech":
+                    st.info(f"💬 用户（针对 {it.get('target', '全体')}）：{it['content']}")
+                else:
+                    st.markdown(f"**{it['name']}**")
+                    st.markdown(it["content"])
+                    st.markdown("---")
 else:
     st.info("还未开始辩论，输入议题后点击「🚀 开始辩论」")
 
