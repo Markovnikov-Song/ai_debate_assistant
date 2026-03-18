@@ -8,16 +8,38 @@
 
 import json
 import os
+import hmac
+import hashlib
+import secrets
 import bcrypt
 import streamlit as st
 from streamlit_cookies_controller import CookieController
 
-USERS_FILE = "users.json"
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-COOKIE_KEY = "debate_user"
+USERS_FILE  = "users.json"
+ADMIN_USER  = os.getenv("ADMIN_USER", "admin")
+COOKIE_KEY  = "debate_token"
+# 签名密钥：从环境变量读，没有就用随机值（重启后 cookie 失效，可接受）
+_SECRET     = os.getenv("COOKIE_SECRET", secrets.token_hex(32))
 
-# 全局 cookie 控制器（每次页面加载只初始化一次）
 _cookie = CookieController()
+
+
+def _make_token(username: str) -> str:
+    """生成 username:hmac 格式的签名 token"""
+    sig = hmac.new(_SECRET.encode(), username.encode(), hashlib.sha256).hexdigest()
+    return f"{username}:{sig}"
+
+
+def _verify_token(token: str) -> str | None:
+    """验证 token，合法返回用户名，否则返回 None"""
+    try:
+        username, sig = token.rsplit(":", 1)
+        expected = hmac.new(_SECRET.encode(), username.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, expected):
+            return username
+    except Exception:
+        pass
+    return None
 
 
 def _load_users() -> dict:
@@ -62,15 +84,20 @@ def login(username: str, password: str) -> tuple[bool, str]:
 
 
 def is_admin() -> bool:
+    if not ADMIN_USER:  # 未配置 ADMIN_USER 时，任何人都不是管理员
+        return False
     return st.session_state.get("current_user") == ADMIN_USER
 
 
 def _restore_from_cookie():
-    """页面加载时尝试从 cookie 恢复登录状态"""
+    """页面加载时从 cookie 恢复登录，必须验证签名"""
     if st.session_state.get("logged_in"):
         return
     try:
-        username = _cookie.get(COOKIE_KEY)
+        token    = _cookie.get(COOKIE_KEY)
+        if not token:
+            return
+        username = _verify_token(token)
         if username and username in _load_users():
             st.session_state.logged_in    = True
             st.session_state.current_user = username
@@ -236,8 +263,8 @@ def render_auth_page() -> bool:
             if ok:
                 st.session_state.logged_in    = True
                 st.session_state.current_user = u.strip()
-                # 写入 cookie，有效期 7 天
-                _cookie.set(COOKIE_KEY, u.strip(), max_age=7 * 24 * 3600)
+                # 写入签名 token，有效期 7 天
+                _cookie.set(COOKIE_KEY, _make_token(u.strip()), max_age=7 * 24 * 3600)
                 st.rerun()
             else:
                 st.error(msg)
