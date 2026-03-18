@@ -7,15 +7,21 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+from auth import render_auth_page
+
+# ===================== 登录拦截 =====================
+if not render_auth_page():
+    st.stop()
 
 # ===================== 基础配置 =====================
 API_KEY = "sk-dwydkdynhxcrnajjpzvbjpyyfinzecaqfyxpszbexrohoqzg"
 BASE_URL = "https://api.siliconflow.cn/v1"
 MODEL = "deepseek-ai/DeepSeek-V3.2"
 
-# 存储配置
-HISTORY_FOLDER = "debate_history"
-CONFIG_FILE = "agent_config.json"
+# 存储配置：每个用户独立文件夹
+CURRENT_USER = st.session_state.current_user
+HISTORY_FOLDER = os.path.join("debate_history", CURRENT_USER)
+CONFIG_FILE = f"agent_config_{CURRENT_USER}.json"
 if not os.path.exists(HISTORY_FOLDER):
     os.makedirs(HISTORY_FOLDER)
 
@@ -165,11 +171,12 @@ def delete_history(filename):
         st.rerun()
 
 
-# ===================== 新增：导出Word函数 =====================
+# ===================== 导出Word函数（返回字节流，支持浏览器下载） =====================
 def export_to_word():
+    """生成 Word 文档并返回 (bytes, filename)，不写磁盘，兼容公网部署。"""
+    import io
     if not st.session_state.topic or len(st.session_state.debate_history) == 0:
-        st.warning("没有可导出的内容")
-        return
+        return None, None
 
     doc = Document()
 
@@ -186,27 +193,25 @@ def export_to_word():
 
     # 辩论记录
     doc.add_heading("二、完整辩论记录", level=1)
-    max_round = st.session_state.debate_round
-    for r in range(1, max_round + 1):
+    for r in range(1, st.session_state.debate_round + 1):
         doc.add_heading(f"第{r}轮", level=2)
-        round_items = [x for x in st.session_state.debate_history if x["round"] == r]
-        for item in round_items:
+        for item in [x for x in st.session_state.debate_history if x["round"] == r]:
             if item["type"] == "user_context":
                 p = doc.add_paragraph()
-                p.add_run(f"💬 用户补充：").bold = True
+                p.add_run("💬 用户补充：").bold = True
                 p.add_run(item["content"].replace("用户补充：", ""))
             elif item["type"] == "agent_speech":
                 p = doc.add_paragraph()
                 p.add_run(f"{item['name']}：").bold = True
-                # 简单处理Markdown加粗（去掉**，保留文字）
-                content = item["content"].replace("**", "")
-                p.add_run(content)
+                p.add_run(item["content"].replace("**", ""))
             doc.add_paragraph()
 
-    # 保存文件
+    # 写入内存，不落磁盘
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
     filename = f"辩论记录_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
-    doc.save(filename)
-    return filename
+    return buf.getvalue(), filename
 
 
 # ===================== AI调用函数 =====================
@@ -244,6 +249,15 @@ def format_history(hist):
 # ===================== 左侧UI（整合所有功能） =====================
 with st.sidebar:
     st.header("⚙️ 核心设置")
+
+    # 当前用户 & 登出
+    st.caption(f"👤 当前用户：{CURRENT_USER}")
+    if st.button("登出", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.current_user = ""
+        st.rerun()
+
+    st.markdown("---")
 
     # 1. 语速调节（新增）
     st.markdown("### ⏱️ 语速调节")
@@ -318,10 +332,17 @@ with st.sidebar:
 
     # 5. 导出与历史
     st.markdown("### 💾 导出与历史")
-    if st.button("📄 导出Word", use_container_width=True):
-        filename = export_to_word()
-        if filename:
-            st.success(f"✅ 已导出：{filename}")
+    word_bytes, word_filename = export_to_word()
+    if word_bytes:
+        st.download_button(
+            label="📄 导出 Word",
+            data=word_bytes,
+            file_name=word_filename,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
+    else:
+        st.button("📄 导出 Word", disabled=True, use_container_width=True)
 
     if st.button("💾 保存辩论", use_container_width=True):
         f = save_debate_history()

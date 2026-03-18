@@ -1,6 +1,9 @@
 # 环境变量（含 API Key，绝对不能上传）
 .env
 
+# 用户数据（含加密密码，不能上传）
+users.json
+
 # Python
 __pycache__/
 *.py[cod]
