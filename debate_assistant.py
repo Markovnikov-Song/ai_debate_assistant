@@ -48,6 +48,33 @@ st.markdown("""
 st.title("🎯 超级多智能体辩论决策助手")
 st.divider()
 
+# ===================== 主页面：议题输入区 =====================
+topic_input = st.text_area(
+    "💬 输入你的辩论议题",
+    value=st.session_state.get("topic", ""),
+    placeholder="例如：大学生是否应该考研？  /  远程办公利大于弊吗？",
+    height=100,
+)
+st.session_state.topic = topic_input.strip()
+
+ctx_input = st.text_area(
+    "📌 补充条件（可选）",
+    value=st.session_state.get("user_context", ""),
+    placeholder="例如：我是大三学生，目标985，家庭条件一般……",
+    height=80,
+)
+if st.button("✅ 确认补充条件", use_container_width=True):
+    st.session_state.user_context = ctx_input.strip()
+    if st.session_state.user_context:
+        st.session_state.debate_history.append({
+            "type": "user_context",
+            "content": f"用户补充：{st.session_state.user_context}",
+            "round": st.session_state.debate_round + 1
+        })
+    st.success("已更新")
+
+st.divider()
+
 # ===================== 会话状态初始化 =====================
 if "topic" not in st.session_state:
     st.session_state.topic = ""
@@ -99,20 +126,31 @@ if not st.session_state.custom_agents:
 
 
 # ===================== 🔥 超级辩论提示词（含打断/追问/抬杠） =====================
-def get_debate_prompt(agent_prompt, is_interrupt=False):
-    base = agent_prompt
-    if is_interrupt:
-        return base + """
-        【特殊规则】这一轮你可以**打断、追问、抬杠**上一个发言的人，不用完整阐述自己的观点，只需要针对上一个人的漏洞提问或反驳，语气可以更尖锐一点，像真实辩论赛的自由辩环节。
-        """
-    else:
-        return base + """
-        【辩论规则】
-        1. 先直接回应上一轮的内容，**必须反驳或承接**，不能自说自话。
-        2. 可以质疑对方的逻辑、数据、前提，像真实辩论一样。
-        3. 核心理由、关键结论、反驳点必须用Markdown加粗。
-        4. 语言自然、像真人，不要机器腔。
-        """
+def get_debate_prompt(agent_prompt):
+    return agent_prompt + """
+【辩论规则】
+1. 先直接回应上一轮的内容，**必须反驳或承接**，不能自说自话。
+2. 可以质疑对方的逻辑、数据、前提，像真实辩论一样。
+3. 核心理由、关键结论、反驳点必须用Markdown加粗。
+4. 语言自然、像真人，不要机器腔。
+5. 控制在150字以内，简明扼要，不要废话。
+"""
+
+
+def get_interrupt_prompt(agent_prompt, target_name, target_content):
+    """打断专用 prompt：明确指定被打断的人和内容"""
+    return agent_prompt + f"""
+【自由辩规则】
+现在是自由辩环节，你要打断并反驳"{target_name}"刚才说的这段话：
+
+"{target_content}"
+
+要求：
+1. 直接针对上面这段话的漏洞、矛盾或不合理之处发起反驳或追问
+2. 不需要完整阐述自己的立场，只需要一针见血地指出问题
+3. 语气可以尖锐，像真实辩论赛的自由辩环节
+4. 控制在100字以内，简短有力
+"""
 
 
 # ===================== 优化后的总结提示词 =====================
@@ -233,7 +271,7 @@ def export_to_word():
 
 
 # ===================== AI调用函数 =====================
-def call_llm(prompt, history_context=""):
+def call_llm(prompt, history_context="", max_tokens=400):
     context = f"核心辩论议题：{st.session_state.topic}\n"
     if st.session_state.user_context:
         context += f"用户补充条件/场景：{st.session_state.user_context}\n"
@@ -245,8 +283,8 @@ def call_llm(prompt, history_context=""):
         response = client.chat.completions.create(
             model=MODEL,
             messages=[{"role": "user", "content": context}],
-            temperature=0.8,  # 稍微提高温度，让辩论更激烈
-            max_tokens=1800
+            temperature=0.8,
+            max_tokens=max_tokens
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -279,25 +317,7 @@ with st.sidebar:
 
     # 1. 语速调节已移除（原为无效延迟）
 
-    st.markdown("---")
-
-    # 2. 辩论配置
-    st.markdown("### 📝 辩论配置")
-    topic = st.text_input("辩论议题", value=st.session_state.topic, placeholder="如水课是否有利于大学生发展")
-    st.session_state.topic = topic.strip()
-
-    ctx = st.text_area("补充条件（学校/成绩/专业/考研等）", value=st.session_state.user_context, height=120)
-    if st.button("✅ 更新补充条件", use_container_width=True):
-        st.session_state.user_context = ctx.strip()
-        if st.session_state.user_context:
-            st.session_state.debate_history.append({
-                "type": "user_context",
-                "content": f"用户补充：{st.session_state.user_context}",
-                "round": st.session_state.debate_round + 1
-            })
-        st.success("已更新")
-
-    st.markdown("---")
+    st.markdown("---")    st.markdown("---")
 
     # 3. 自定义角色（新增）
     st.markdown("### 🎭 角色管理")
@@ -436,23 +456,54 @@ if interrupt:
     r = st.session_state.debate_round
     st.subheader(f"⚡ 第{r}轮（自由辩·打断/追问）")
     h = format_history(st.session_state.debate_history)
-    # 自由辩：随机选2-3个角色进行打断/追问
+
+    # 取上一轮最后几条发言作为"被打断"的候选
+    last_speeches = [
+        x for x in st.session_state.debate_history
+        if x["type"] == "agent_speech"
+    ][-len(st.session_state.custom_agents):]  # 上一轮所有发言
+
+    batch = []
     import random
 
-    interrupt_agents = random.sample(st.session_state.custom_agents, min(3, len(st.session_state.custom_agents)))
-    batch = []
-    for agent in interrupt_agents:
-        st.markdown(f"### 🗣 {agent['name']}（打断/追问）")
+    # 模拟 3 次交替打断：每次随机选一个打断者，打断上一条发言
+    current_target = last_speeches[-1] if last_speeches else None
+    for _ in range(3):
+        if not current_target:
+            break
+
+        # 选一个不是被打断者的角色来发起打断
+        other_agents = [
+            a for a in st.session_state.custom_agents
+            if a["name"] != current_target["name"]
+        ]
+        if not other_agents:
+            break
+        attacker = random.choice(other_agents)
+
+        st.markdown(f"### ⚡ {attacker['name']} 打断 {current_target['name']}")
         with st.spinner("组织语言中..."):
-            content = call_llm(get_debate_prompt(agent["prompt"], is_interrupt=True), h)
+            content = call_llm(
+                get_interrupt_prompt(
+                    attacker["prompt"],
+                    current_target["name"],
+                    current_target["content"][:300]  # 只取前300字避免 token 过多
+                ),
+                h
+            )
             st.markdown(content)
-        batch.append({
+        st.divider()
+
+        entry = {
             "type": "agent_speech",
             "round": r,
-            "name": agent["name"],
-            "content": content
-        })
-        st.divider()
+            "name": attacker["name"],
+            "content": f"（打断{current_target['name']}）{content}"
+        }
+        batch.append(entry)
+        # 下一次打断的目标变成刚才的攻击者
+        current_target = {"name": attacker["name"], "content": content}
+
     st.session_state.debate_history.extend(batch)
     st.success(f"✅ 自由辩环节完成")
 
@@ -460,7 +511,7 @@ if summary:
     st.subheader("📊 最终决策总结")
     with st.spinner("生成总结中..."):
         h = format_history(st.session_state.debate_history)
-        res = call_llm(SUMMARIZER_PROMPT, h)
+        res = call_llm(SUMMARIZER_PROMPT, h, max_tokens=800)
         st.markdown(res)
 
 # ===================== 历史展示 =====================
