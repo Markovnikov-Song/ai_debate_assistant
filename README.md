@@ -6,6 +6,14 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.x-red)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+## 🌐 在线体验
+
+直接访问，无需安装：
+
+**[https://debate-assistant.streamlit.app/](https://debate-assistant.streamlit.app/)**
+
+支持电脑和手机浏览器，注册账号后即可使用。
+
 ## ✨ 功能特性
 
 - 用户注册/登录：账号密码认证，密码 bcrypt 加密，数据按用户隔离
