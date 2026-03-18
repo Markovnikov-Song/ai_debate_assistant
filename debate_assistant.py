@@ -1,6 +1,5 @@
 import streamlit as st
 from openai import OpenAI
-import time
 import json
 import os
 from datetime import datetime
@@ -21,7 +20,6 @@ MODEL = "deepseek-ai/DeepSeek-V3.2"
 # 存储配置：每个用户独立文件夹
 CURRENT_USER = st.session_state.get("current_user", "guest")
 HISTORY_FOLDER = os.path.join("debate_history", CURRENT_USER)
-CONFIG_FILE = f"agent_config_{CURRENT_USER}.json"
 if not os.path.exists(HISTORY_FOLDER):
     os.makedirs(HISTORY_FOLDER)
 
@@ -64,16 +62,18 @@ if "current_history_id" not in st.session_state:
 if "custom_agents" not in st.session_state:
     st.session_state.custom_agents = []
 if "speed" not in st.session_state:
-    st.session_state.speed = 1.0  # 默认语速
+    st.session_state.speed = 0.0  # 保留兼容，不再使用
 
 
 # ===================== 加载/保存自定义角色配置 =====================
 def load_agent_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    # 每次动态获取当前用户的配置文件路径，避免 guest 路径污染
+    user = st.session_state.get("current_user", "guest")
+    cfg_file = f"agent_config_{user}.json"
+    if os.path.exists(cfg_file):
+        with open(cfg_file, "r", encoding="utf-8") as f:
             return json.load(f)
     else:
-        # 默认角色
         return [
             {"name": "支持派",
              "prompt": "你是立场鲜明的支持派，说话像真实大学生一样自然、有逻辑、有情绪，但不偏激。先承接上一轮内容，针对性反驳对方，再讲自己的观点。核心理由、关键结论必须加粗。"},
@@ -87,7 +87,9 @@ def load_agent_config():
 
 
 def save_agent_config(agents):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+    user = st.session_state.get("current_user", "guest")
+    cfg_file = f"agent_config_{user}.json"
+    with open(cfg_file, "w", encoding="utf-8") as f:
         json.dump(agents, f, ensure_ascii=False, indent=2)
 
 
@@ -275,10 +277,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 1. 语速调节（新增）
-    st.markdown("### ⏱️ 语速调节")
-    speed = st.slider("AI思考/输出速度", 0.1, 2.0, st.session_state.speed, 0.1, help="数值越小越快，越大越慢")
-    st.session_state.speed = speed
+    # 1. 语速调节已移除（原为无效延迟）
 
     st.markdown("---")
 
@@ -399,7 +398,6 @@ if start:
     for agent in st.session_state.custom_agents:
         st.markdown(f"### 🗣 {agent['name']}")
         with st.spinner("思考中..."):
-            time.sleep(st.session_state.speed)
             content = call_llm(get_debate_prompt(agent["prompt"]), hist_str)
             st.markdown(content)
             batch.append({
@@ -421,7 +419,6 @@ if cont:
     for agent in st.session_state.custom_agents:
         st.markdown(f"### 🗣 {agent['name']}")
         with st.spinner("思考中..."):
-            time.sleep(st.session_state.speed)
             content = call_llm(get_debate_prompt(agent["prompt"]), h)
             st.markdown(content)
             batch.append({
@@ -447,7 +444,6 @@ if interrupt:
     for agent in interrupt_agents:
         st.markdown(f"### 🗣 {agent['name']}（打断/追问）")
         with st.spinner("组织语言中..."):
-            time.sleep(st.session_state.speed * 0.8)
             content = call_llm(get_debate_prompt(agent["prompt"], is_interrupt=True), h)
             st.markdown(content)
         batch.append({
