@@ -126,7 +126,7 @@ def render_admin_panel():
     if not is_admin():
         return
     with st.expander("🛡️ 管理员面板", expanded=False):
-        tab_stats, tab_users = st.tabs(["📊 使用统计", "👥 用户管理"])
+        tab_stats, tab_users, tab_feedback = st.tabs(["📊 使用统计", "👥 用户管理", "💬 意见反馈"])
 
         with tab_stats:
             stats = _get_usage_stats()
@@ -179,6 +179,29 @@ def render_admin_panel():
                             del users[uname]
                             _save_users(users)
                             st.rerun()
+
+        with tab_feedback:
+            FEEDBACK_FILE = "feedback.json"
+            if not os.path.exists(FEEDBACK_FILE):
+                st.info("暂无反馈")
+            else:
+                with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+                    feedbacks = json.load(f)
+                unread = sum(1 for x in feedbacks if not x.get("read"))
+                st.caption(f"共 {len(feedbacks)} 条反馈，{unread} 条未读")
+                for i, fb in enumerate(reversed(feedbacks)):
+                    tag = "🔴 未读" if not fb.get("read") else "✅ 已读"
+                    with st.expander(f"{tag}  {fb['user']}  {fb['time']}", expanded=not fb.get("read")):
+                        st.write(fb["content"])
+                        if not fb.get("read"):
+                            if st.button("标为已读", key=f"read_{i}"):
+                                idx = len(feedbacks) - 1 - i
+                                feedbacks[idx]["read"] = True
+                                tmp = FEEDBACK_FILE + ".tmp"
+                                with open(tmp, "w", encoding="utf-8") as f:
+                                    json.dump(feedbacks, f, ensure_ascii=False, indent=2)
+                                os.replace(tmp, FEEDBACK_FILE)
+                                st.rerun()
 
 
 def logout():

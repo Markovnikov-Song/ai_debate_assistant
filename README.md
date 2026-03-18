@@ -16,13 +16,15 @@
 
 ## ✨ 功能特性
 
-- 用户注册/登录：账号密码认证，密码 bcrypt 加密，数据按用户隔离
+- 用户注册/登录：账号密码认证，bcrypt 加密，Cookie 持久化登录，刷新不退出
 - 多智能体辩论：支持派、反对派、中立理性派、长期视角派同台辩论
-- 自由辩环节：支持打断、追问、抬杠，模拟真实辩论
+- 自由辩环节：打断/追问/抬杠，次数可自定义（1-6次）
 - 自定义角色：可自由添加、编辑、删除辩论角色及人设
-- 历史记录：每个用户独立保存，支持加载和删除
-- 导出 Word：一键下载完整辩论记录（浏览器直接下载，兼容公网部署）
-- 语速调节：控制 AI 输出节奏
+- 自动保存：每轮结束自动保存，不怕丢失
+- 历史记录：每个用户独立存储，支持加载和删除
+- 导出 Word：一键下载完整辩论记录含总结，兼容公网部署
+- 意见反馈：用户可提交反馈，管理员后台直接查看
+- 管理员面板：用户管理、使用数据统计、意见反馈查看
 
 ## 🚀 快速开始
 
@@ -51,21 +53,29 @@ cd ai-debate-assistant
 
 > 如果 `setup.bat` 提示找不到 conda，请用 Anaconda Prompt 打开后手动运行。
 
-### 第三步：填入 API Key
+### 第三步：填入配置
 
-用记事本打开项目目录下的 `.env` 文件：
+用记事本打开 `.env` 文件：
 
 ```env
 API_KEY=你的API Key
 BASE_URL=https://api.siliconflow.cn/v1
 MODEL=deepseek-ai/DeepSeek-V3
+ADMIN_USER=admin
 ```
 
-### 第四步：启动应用
+### 第四步：初始化管理员账号
 
-双击 `start.bat`，浏览器自动打开 `http://localhost:8501`，注册账号后即可使用。
+```bash
+conda activate debate-env
+python init_admin.py
+```
 
-以后每次使用只需双击 `start.bat`。
+默认创建 `admin` / `123456`，可在 `init_admin.py` 里修改。
+
+### 第五步：启动应用
+
+双击 `start.bat`，浏览器自动打开 `http://localhost:8501`。
 
 ## 🔑 支持的 API
 
@@ -78,26 +88,34 @@ MODEL=deepseek-ai/DeepSeek-V3
 
 ## 🛠️ 使用说明
 
-1. 首次使用先注册账号，之后登录
-2. 在左侧输入栏填写辩论议题
-3. 可选填补充条件（个人情况、约束条件等）
-4. 点击「🚀 开始」启动第一轮辩论
-5. 点击「🔁 继续」进行多轮辩论
-6. 点击「⚡ 自由辩」触发打断/追问环节
-7. 点击「📊 生成总结」获取决策建议
-8. 点击「📄 导出 Word」下载辩论记录
+1. 注册账号后登录（Cookie 保持登录，刷新不退出）
+2. 输入辩论议题和补充条件
+3. 点击「🚀 开始辩论」启动第一轮
+4. 点击「⚡ 自由辩」触发打断/追问（次数可在侧边栏设置）
+5. 点击「📊 总结」获取决策建议，可重新生成
+6. 点击「📄 导出 Word」下载完整记录
+7. 页面底部「💬 意见反馈」可提交建议
+
+## 🛡️ 管理员功能
+
+用 `ADMIN_USER` 对应的账号登录后，侧边栏出现管理员面板，包含：
+
+- 📊 使用统计：注册用户数、总辩论场次、每日趋势图
+- 👥 用户管理：重置密码、删除用户
+- 💬 意见反馈：查看用户提交的反馈，标记已读
 
 ## 📁 项目结构
 
 ```
 ai-debate-assistant/
 ├── debate_assistant.py   # 主程序
-├── auth.py               # 用户注册/登录模块
+├── auth.py               # 用户认证 + 管理员面板
+├── init_admin.py         # 初始化管理员账号（运行一次）
 ├── requirements.txt      # 依赖列表
 ├── setup.bat             # 一键配置环境（Anaconda）
 ├── start.bat             # 一键启动应用
 ├── .env.example          # 环境变量模板
-├── .gitignore            # Git 忽略规则（含 .env 和 users.json）
+├── .gitignore            # Git 忽略规则
 ├── LICENSE               # MIT 许可证
 └── README.md             # 项目说明
 ```
@@ -107,18 +125,14 @@ ai-debate-assistant/
 **Q：双击 setup.bat 闪退怎么办？**
 用 Anaconda Prompt 进入项目目录手动运行，可以看到报错信息。
 
-**Q：conda 命令找不到？**
-确认 Anaconda 已安装，安装时勾选"Add to PATH"，或改用 Anaconda Prompt 运行。
+**Q：API 调用失败 401？**
+Streamlit Cloud 部署时需在 App Settings → Secrets 里配置环境变量，不能依赖 `.env` 文件。
 
-**Q：依赖安装很慢？**
-setup.bat 已默认使用清华镜像源，仍慢可换阿里源：
-`pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple`
-
-**Q：API 调用失败？**
-检查 `.env` 中的 `API_KEY`、`BASE_URL`、`MODEL` 是否正确，不同服务商的 BASE_URL 不同。
+**Q：刷新页面退出登录？**
+已通过 Cookie 解决，有效期 7 天。若仍退出，检查浏览器是否禁用了 Cookie。
 
 **Q：用户数据存在哪里？**
-账号信息存在 `users.json`，辩论记录存在 `debate_history/{用户名}/`，均在本地，不会上传 GitHub。
+账号存 `users.json`，辩论记录存 `debate_history/{用户名}/`，反馈存 `feedback.json`，均不会上传 GitHub。
 
 ## 📄 License
 

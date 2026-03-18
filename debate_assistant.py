@@ -223,6 +223,39 @@ def export_to_word():
     buf.seek(0)
     return buf.getvalue(), f"辩论记录_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
 
+
+# ===================== 意见反馈 =====================
+FEEDBACK_FILE = "feedback.json"
+
+def save_feedback(content: str):
+    feedbacks = []
+    if os.path.exists(FEEDBACK_FILE):
+        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+            feedbacks = json.load(f)
+    feedbacks.append({
+        "user":    CURRENT_USER,
+        "time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "content": content,
+        "read":    False,
+    })
+    tmp = FEEDBACK_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(feedbacks, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, FEEDBACK_FILE)
+
+def render_feedback_box():
+    with st.expander("💬 意见反馈", expanded=False):
+        text = st.text_area("遇到问题或有建议？告诉我们", height=100,
+                            placeholder="例如：某个功能有 bug / 希望增加 xxx 功能……",
+                            key="feedback_input")
+        if st.button("提交反馈", use_container_width=True):
+            if text.strip():
+                save_feedback(text.strip())
+                st.success("感谢反馈，已收到！")
+                st.session_state.feedback_input = ""
+            else:
+                st.warning("请输入反馈内容")
+
 # ===================== AI 调用 =====================
 def format_history_recent(hist, last_n_rounds=2):
     if not hist: return ""
@@ -445,3 +478,6 @@ if st.session_state.debate_history:
                 st.markdown("---")
 else:
     st.info("还未开始辩论，输入议题后点击「🚀 开始辩论」")
+
+st.divider()
+render_feedback_box()
