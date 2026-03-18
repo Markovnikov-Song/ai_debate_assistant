@@ -361,38 +361,45 @@ with c3: do_summary = st.button("📊 总结",   use_container_width=True, disab
 
 # ===================== 用户插嘴区（有辩论历史时显示） =====================
 if has_history:
-    with st.expander("💬 加入讨论", expanded=bool(st.session_state.pending_user_speech)):
-        agent_names = [a["name"] for a in st.session_state.custom_agents]
+    st.markdown("""
+    <div style="border: 2px solid #4f8bf9; border-radius: 12px; padding: 1rem 1.2rem; margin: 0.5rem 0 1rem 0; background: rgba(79,139,249,0.06);">
+    <span style="font-size:1.1rem; font-weight:600;">💬 加入讨论</span>
+    <span style="font-size:0.85rem; color:#888; margin-left:8px;">输入你的观点，下一轮 AI 会直接回应你</span>
+    </div>
+    """, unsafe_allow_html=True)
+    agent_names = [a["name"] for a in st.session_state.custom_agents]
+    col_sel, col_input = st.columns([1, 3])
+    with col_sel:
         target = st.selectbox("发言对象", ["全体"] + agent_names, key="user_speech_target")
-        user_input = st.text_area("你的观点", height=80, placeholder="输入你的观点，下一轮 AI 将回应你...",
-                                  key="user_speech_input")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("✅ 提交发言", use_container_width=True):
-                if user_input.strip():
-                    st.session_state.pending_user_speech = {
-                        "target":  target,
-                        "content": user_input.strip(),
-                        "round":   st.session_state.debate_round,
-                    }
-                    st.session_state.debate_history.append({
-                        "type":    "user_speech",
-                        "round":   st.session_state.debate_round,
-                        "name":    "用户",
-                        "target":  target,
-                        "content": f"（对{target}）{user_input.strip()}",
-                    })
-                    st.success("发言已提交，点击「继续辩论」让 AI 回应你")
-                else:
-                    st.warning("请输入内容")
-        with col_b:
-            if st.button("🗑️ 取消发言", use_container_width=True):
-                st.session_state.pending_user_speech = None
-                # 移除最后一条 user_speech
-                st.session_state.debate_history = [
-                    x for x in st.session_state.debate_history
-                    if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
-                ]
+    with col_input:
+        user_input = st.text_area("你的观点", height=80, placeholder="例如：我觉得支持派忽略了一个关键问题……",
+                                  key="user_speech_input", label_visibility="collapsed")
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        if st.button("✅ 提交发言，下一轮 AI 回应我", use_container_width=True, type="primary"):
+            if user_input.strip():
+                st.session_state.pending_user_speech = {
+                    "target":  target,
+                    "content": user_input.strip(),
+                    "round":   st.session_state.debate_round,
+                }
+                st.session_state.debate_history.append({
+                    "type":    "user_speech",
+                    "round":   st.session_state.debate_round,
+                    "name":    "用户",
+                    "target":  target,
+                    "content": f"（对{target}）{user_input.strip()}",
+                })
+                st.success("✅ 已提交，点击「继续辩论」让 AI 回应你")
+            else:
+                st.warning("请输入内容")
+    with col_b:
+        if st.button("取消", use_container_width=True):
+            st.session_state.pending_user_speech = None
+            st.session_state.debate_history = [
+                x for x in st.session_state.debate_history
+                if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
+            ]
                 st.rerun()
 
 st.divider()
