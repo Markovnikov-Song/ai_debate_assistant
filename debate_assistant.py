@@ -19,7 +19,7 @@ BASE_URL = "https://api.siliconflow.cn/v1"
 MODEL = "deepseek-ai/DeepSeek-V3.2"
 
 # 存储配置：每个用户独立文件夹
-CURRENT_USER = st.session_state.current_user
+CURRENT_USER = st.session_state.get("current_user", "guest")
 HISTORY_FOLDER = os.path.join("debate_history", CURRENT_USER)
 CONFIG_FILE = f"agent_config_{CURRENT_USER}.json"
 if not os.path.exists(HISTORY_FOLDER):
@@ -29,7 +29,24 @@ if not os.path.exists(HISTORY_FOLDER):
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
 # Streamlit页面配置
-st.set_page_config(page_title="超级辩论助手", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="超级辩论助手", page_icon="🎯", layout="centered")
+
+# 手机端适配样式
+st.markdown("""
+<style>
+/* 正文字体在手机上稍大一点 */
+@media (max-width: 768px) {
+    .block-container { padding: 1rem 0.75rem; }
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.2rem !important; }
+    h3 { font-size: 1rem !important; }
+    p, li { font-size: 0.95rem !important; line-height: 1.6; }
+    /* 按钮撑满宽度更好点击 */
+    .stButton > button { width: 100%; }
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🎯 超级多智能体辩论决策助手")
 st.divider()
 
@@ -147,8 +164,7 @@ def load_debate_history(filename):
     st.session_state.current_history_id = filename
     if "agents_used" in data:
         st.session_state.custom_agents = data["agents_used"]
-    st.success("✅ 历史记录已加载")
-    return True
+    st.rerun()  # 刷新页面让内容显示出来
 
 
 def get_all_history():
@@ -379,15 +395,13 @@ if start:
     st.session_state.debate_round += 1
     r = st.session_state.debate_round
     st.subheader(f"📢 第{r}轮辩论")
-    cols = st.columns(2)
     batch = []
-    for i, agent in enumerate(st.session_state.custom_agents):
-        with cols[i % 2]:
-            st.markdown(f"### 🗣 {agent['name']}")
-            with st.spinner("思考中..."):
-                time.sleep(st.session_state.speed)
-                content = call_llm(get_debate_prompt(agent["prompt"]), hist_str)
-                st.markdown(content)
+    for agent in st.session_state.custom_agents:
+        st.markdown(f"### 🗣 {agent['name']}")
+        with st.spinner("思考中..."):
+            time.sleep(st.session_state.speed)
+            content = call_llm(get_debate_prompt(agent["prompt"]), hist_str)
+            st.markdown(content)
             batch.append({
                 "type": "agent_speech",
                 "round": r,
@@ -403,15 +417,13 @@ if cont:
     r = st.session_state.debate_round
     st.subheader(f"📢 第{r}轮（继续辩论）")
     h = format_history(st.session_state.debate_history)
-    cols = st.columns(2)
     batch = []
-    for i, agent in enumerate(st.session_state.custom_agents):
-        with cols[i % 2]:
-            st.markdown(f"### 🗣 {agent['name']}")
-            with st.spinner("思考中..."):
-                time.sleep(st.session_state.speed)
-                content = call_llm(get_debate_prompt(agent["prompt"]), h)
-                st.markdown(content)
+    for agent in st.session_state.custom_agents:
+        st.markdown(f"### 🗣 {agent['name']}")
+        with st.spinner("思考中..."):
+            time.sleep(st.session_state.speed)
+            content = call_llm(get_debate_prompt(agent["prompt"]), h)
+            st.markdown(content)
             batch.append({
                 "type": "agent_speech",
                 "round": r,
