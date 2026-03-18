@@ -28,12 +28,12 @@ if not os.path.exists(HISTORY_FOLDER):
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
 # ===================== 页面配置 =====================
-st.set_page_config(page_title="超级辩论助手", page_icon="🎯", layout="centered")
+st.set_page_config(page_title="多智能体辩论助手", page_icon="🎯", layout="centered")
 st.markdown("""
 <style>
 @media (max-width: 768px) {
-    .block-container { padding: 1rem 0.75rem; }
-    h1 { font-size: 1.4rem !important; }
+    .block-container { padding: 1rem 0.75rem; padding-top: 2.5rem !important; }
+    h1 { font-size: 1.4rem !important; word-break: break-all; }
     h2 { font-size: 1.2rem !important; }
     h3 { font-size: 1rem !important; }
     p, li { font-size: 0.95rem !important; line-height: 1.6; }
@@ -332,7 +332,7 @@ def call_llm(prompt, history_context="", max_tokens=400):
         return "调用失败"
 
 # ===================== 主页面 =====================
-st.title("🎯 超级多智能体辩论决策助手")
+st.title("🎯 多智能体辩论助手")
 st.divider()
 
 st.session_state.topic = st.text_area(
