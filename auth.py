@@ -3,15 +3,21 @@
 - 用户数据存储在 users.json
 - 密码使用 bcrypt 加密
 - 支持注册、登录、登出、管理员面板
+- 使用 cookie 持久化登录状态，刷新不退出
 """
 
 import json
 import os
 import bcrypt
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 
-USERS_FILE  = "users.json"
-ADMIN_USER  = os.getenv("ADMIN_USER", "admin")
+USERS_FILE = "users.json"
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+COOKIE_KEY = "debate_user"
+
+# 全局 cookie 控制器（每次页面加载只初始化一次）
+_cookie = CookieController()
 
 
 def _load_users() -> dict:
@@ -22,11 +28,10 @@ def _load_users() -> dict:
 
 
 def _save_users(users: dict):
-    """写入用户数据，使用临时文件原子替换防止并发损坏"""
     tmp = USERS_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(users, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, USERS_FILE)  # 原子替换，跨平台安全
+    os.replace(tmp, USERS_FILE)
 
 
 def register(username: str, password: str) -> tuple[bool, str]:
@@ -51,8 +56,7 @@ def login(username: str, password: str) -> tuple[bool, str]:
     users    = _load_users()
     if username not in users:
         return False, "用户名不存在"
-    hashed = users[username]["password"].encode()
-    if bcrypt.checkpw(password.encode(), hashed):
+    if bcrypt.checkpw(password.encode(), users[username]["password"].encode()):
         return True, "登录成功"
     return False, "密码错误"
 
@@ -61,8 +65,20 @@ def is_admin() -> bool:
     return st.session_state.get("current_user") == ADMIN_USER
 
 
+def _restore_from_cookie():
+    """页面加载时尝试从 cookie 恢复登录状态"""
+    if st.session_state.get("logged_in"):
+        return
+    try:
+        username = _cookie.get(COOKIE_KEY)
+        if username and username in _load_users():
+            st.session_state.logged_in    = True
+            st.session_state.current_user = username
+    except Exception:
+        pass
+
+
 def render_admin_panel():
-    """管理员面板：查看用户、删除用户、重置密码"""
     if not is_admin():
         return
     with st.expander("🛡️ 管理员面板", expanded=False):
@@ -86,12 +102,24 @@ def render_admin_panel():
                     if st.button("删除", key=f"del_user_{uname}"):
                         del users[uname]
                         _save_users(users)
-                        st.success(f"已删除 {uname}")
                         st.rerun()
+
+
+def logout():
+    """登出：清除 session 和 cookie"""
+    st.session_state.logged_in    = False
+    st.session_state.current_user = ""
+    try:
+        _cookie.remove(COOKIE_KEY)
+    except Exception:
+        pass
+    st.rerun()
 
 
 def render_auth_page() -> bool:
     """已登录返回 True，未登录渲染登录页并返回 False"""
+    _restore_from_cookie()
+
     if st.session_state.get("logged_in"):
         return True
 
@@ -108,7 +136,9 @@ def render_auth_page() -> bool:
             ok, msg = login(u, p)
             if ok:
                 st.session_state.logged_in    = True
-                st.session_state.current_user = u
+                st.session_state.current_user = u.strip()
+                # 写入 cookie，有效期 7 天
+                _cookie.set(COOKIE_KEY, u.strip(), max_age=7 * 24 * 3600)
                 st.rerun()
             else:
                 st.error(msg)

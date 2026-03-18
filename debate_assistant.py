@@ -7,7 +7,7 @@ from datetime import datetime
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from dotenv import load_dotenv
-from auth import render_auth_page, render_admin_panel
+from auth import render_auth_page, render_admin_panel, logout
 
 load_dotenv()
 
@@ -285,9 +285,7 @@ with st.sidebar:
     st.header("⚙️ 设置")
     st.caption(f"👤 {CURRENT_USER}")
     if st.button("登出", use_container_width=True):
-        st.session_state.logged_in    = False
-        st.session_state.current_user = ""
-        st.rerun()
+        logout()
 
     # 管理员面板（仅管理员可见）
     render_admin_panel()
