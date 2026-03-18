@@ -3,43 +3,16 @@
 - 用户数据存储在 users.json
 - 密码使用 bcrypt 加密
 - 支持注册、登录、登出、管理员面板
-- 使用 cookie 持久化登录状态，刷新不退出
+- 刷新页面需重新登录（无 cookie 持久化，防止串号）
 """
 
 import json
 import os
-import hmac
-import hashlib
-import secrets
 import bcrypt
 import streamlit as st
-from streamlit_cookies_controller import CookieController
 
-USERS_FILE  = "users.json"
-ADMIN_USER  = os.getenv("ADMIN_USER", "admin")
-COOKIE_KEY  = "debate_token"
-# 签名密钥：从环境变量读，没有就用随机值（重启后 cookie 失效，可接受）
-_SECRET     = os.getenv("COOKIE_SECRET", secrets.token_hex(32))
-
-_cookie = CookieController()
-
-
-def _make_token(username: str) -> str:
-    """生成 username:hmac 格式的签名 token"""
-    sig = hmac.new(_SECRET.encode(), username.encode(), hashlib.sha256).hexdigest()
-    return f"{username}:{sig}"
-
-
-def _verify_token(token: str) -> str | None:
-    """验证 token，合法返回用户名，否则返回 None"""
-    try:
-        username, sig = token.rsplit(":", 1)
-        expected = hmac.new(_SECRET.encode(), username.encode(), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(sig, expected):
-            return username
-    except Exception:
-        pass
-    return None
+USERS_FILE = "users.json"
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 
 
 def _load_users() -> dict:
@@ -84,59 +57,31 @@ def login(username: str, password: str) -> tuple[bool, str]:
 
 
 def is_admin() -> bool:
-    if not ADMIN_USER:  # 未配置 ADMIN_USER 时，任何人都不是管理员
+    if not ADMIN_USER:
         return False
     return st.session_state.get("current_user") == ADMIN_USER
 
 
-def _restore_from_cookie():
-    """页面加载时从 cookie 恢复登录，每次都验证签名，不信任 session state 缓存"""
-    try:
-        token = _cookie.get(COOKIE_KEY)
-        if not token:
-            # 没有 cookie，强制清除 session（防止 session 复用）
-            st.session_state.logged_in    = False
-            st.session_state.current_user = ""
-            return
-        username = _verify_token(token)
-        if username and username in _load_users():
-            st.session_state.logged_in    = True
-            st.session_state.current_user = username
-        else:
-            # token 无效或用户不存在，清除
-            st.session_state.logged_in    = False
-            st.session_state.current_user = ""
-    except Exception:
-        st.session_state.logged_in    = False
-        st.session_state.current_user = ""
+def logout():
+    st.session_state.logged_in    = False
+    st.session_state.current_user = ""
+    st.rerun()
 
 
 def _get_usage_stats() -> dict:
-    """
-    聚合统计所有用户的使用数据，不读取辩论具体内容。
-    返回：用户数、总辩论场次、总轮数、活跃用户、最近7天活跃数
-    """
     import glob
     from collections import defaultdict
-
     base = "debate_history"
     stats = {
-        "total_users": 0,
-        "total_debates": 0,
-        "total_rounds": 0,
-        "user_debate_counts": {},   # {username: 场次}
-        "daily_counts": defaultdict(int),  # {日期: 场次}
+        "total_users": 0, "total_debates": 0, "total_rounds": 0,
+        "user_debate_counts": {}, "daily_counts": defaultdict(int),
     }
-
     if not os.path.exists(base):
         return stats
-
     user_dirs = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
     stats["total_users"] = len(user_dirs)
-
     for user in user_dirs:
-        user_path = os.path.join(base, user)
-        files = glob.glob(os.path.join(user_path, "*.json"))
+        files = glob.glob(os.path.join(base, user, "*.json"))
         count = 0
         for fp in files:
             try:
@@ -151,7 +96,6 @@ def _get_usage_stats() -> dict:
                 continue
         stats["user_debate_counts"][user] = count
         stats["total_debates"] += count
-
     return stats
 
 
@@ -163,14 +107,10 @@ def render_admin_panel():
 
         with tab_stats:
             stats = _get_usage_stats()
-
-            # 核心指标
             m1, m2, m3 = st.columns(3)
             m1.metric("注册用户数", stats["total_users"])
             m2.metric("总辩论场次", stats["total_debates"])
             m3.metric("总辩论轮数", stats["total_rounds"])
-
-            # 各用户场次（不显示内容）
             if stats["user_debate_counts"]:
                 st.markdown("**各用户辩论场次**")
                 import pandas as pd
@@ -179,8 +119,6 @@ def render_admin_panel():
                     columns=["用户", "场次"]
                 ).sort_values("场次", ascending=False)
                 st.bar_chart(df_users.set_index("用户"))
-
-            # 每日活跃趋势
             if stats["daily_counts"]:
                 st.markdown("**每日辩论场次趋势**")
                 import pandas as pd
@@ -237,21 +175,8 @@ def render_admin_panel():
                                 st.rerun()
 
 
-def logout():
-    """登出：清除 session 和 cookie"""
-    st.session_state.logged_in    = False
-    st.session_state.current_user = ""
-    try:
-        _cookie.remove(COOKIE_KEY)
-    except Exception:
-        pass
-    st.rerun()
-
-
 def render_auth_page() -> bool:
     """已登录返回 True，未登录渲染登录页并返回 False"""
-    _restore_from_cookie()
-
     if st.session_state.get("logged_in"):
         return True
 
@@ -269,8 +194,6 @@ def render_auth_page() -> bool:
             if ok:
                 st.session_state.logged_in    = True
                 st.session_state.current_user = u.strip()
-                # 写入签名 token，有效期 7 天
-                _cookie.set(COOKIE_KEY, _make_token(u.strip()), max_age=7 * 24 * 3600)
                 st.rerun()
             else:
                 st.error(msg)
