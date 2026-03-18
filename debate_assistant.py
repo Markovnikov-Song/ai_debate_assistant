@@ -361,10 +361,10 @@ with c3: do_summary = st.button("📊 总结",   use_container_width=True, disab
 
 # ===================== 用户插嘴区（有辩论历史时显示） =====================
 if has_history:
-    with st.expander("💬 我要插嘴", expanded=bool(st.session_state.pending_user_speech)):
+    with st.expander("💬 加入讨论", expanded=bool(st.session_state.pending_user_speech)):
         agent_names = [a["name"] for a in st.session_state.custom_agents]
-        target = st.selectbox("针对谁说？", ["全体"] + agent_names, key="user_speech_target")
-        user_input = st.text_area("你的观点", height=80, placeholder="输入你想说的，下一轮 AI 会回应你...",
+        target = st.selectbox("发言对象", ["全体"] + agent_names, key="user_speech_target")
+        user_input = st.text_area("你的观点", height=80, placeholder="输入你的观点，下一轮 AI 将回应你...",
                                   key="user_speech_input")
         col_a, col_b = st.columns(2)
         with col_a:
@@ -485,7 +485,7 @@ if run_debate:
 
     # 如果有用户插嘴，先展示出来
     if user_speech:
-        st.info(f"💬 用户（针对{user_speech['target']}）：{user_speech['content']}")
+        st.info(f"🙋 用户发言（对象：{user_speech['target']}）：{user_speech['content']}")
 
     batch = []
     for agent in st.session_state.custom_agents:
@@ -567,7 +567,7 @@ if st.session_state.debate_history:
         with st.expander(f"第{r}轮", expanded=(r == st.session_state.debate_round)):
             for it in items:
                 if it["type"] == "user_speech":
-                    st.info(f"💬 用户（针对 {it.get('target', '全体')}）：{it['content']}")
+                    st.info(f"🙋 用户发言（对象：{it.get('target', '全体')}）：{it['content']}")
                 else:
                     st.markdown(f"**{it['name']}**")
                     st.markdown(it["content"])
