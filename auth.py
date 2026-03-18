@@ -7,12 +7,11 @@
 
 import json
 import os
-import fcntl  # 文件锁，防并发写损坏
 import bcrypt
 import streamlit as st
 
 USERS_FILE  = "users.json"
-ADMIN_USER  = os.getenv("ADMIN_USER", "admin")   # 管理员用户名，从环境变量读
+ADMIN_USER  = os.getenv("ADMIN_USER", "admin")
 
 
 def _load_users() -> dict:
@@ -23,14 +22,11 @@ def _load_users() -> dict:
 
 
 def _save_users(users: dict):
-    """带文件锁的写入，防止多人同时注册导致文件损坏"""
-    with open(USERS_FILE, "a+", encoding="utf-8") as lock_f:
-        fcntl.flock(lock_f, fcntl.LOCK_EX)
-        try:
-            with open(USERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(users, f, ensure_ascii=False, indent=2)
-        finally:
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
+    """写入用户数据，使用临时文件原子替换防止并发损坏"""
+    tmp = USERS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, USERS_FILE)  # 原子替换，跨平台安全
 
 
 def register(username: str, password: str) -> tuple[bool, str]:
