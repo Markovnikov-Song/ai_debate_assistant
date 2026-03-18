@@ -63,15 +63,8 @@ ctx_input = st.text_area(
     placeholder="例如：我是大三学生，目标985，家庭条件一般……",
     height=80,
 )
-if st.button("✅ 确认补充条件", use_container_width=True):
-    st.session_state.user_context = ctx_input.strip()
-    if st.session_state.user_context:
-        st.session_state.debate_history.append({
-            "type": "user_context",
-            "content": f"用户补充：{st.session_state.user_context}",
-            "round": st.session_state.debate_round + 1
-        })
-    st.success("已更新")
+# 实时同步，不需要点按钮
+st.session_state.user_context = ctx_input.strip()
 
 st.divider()
 
