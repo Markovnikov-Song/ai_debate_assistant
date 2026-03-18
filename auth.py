@@ -78,31 +78,107 @@ def _restore_from_cookie():
         pass
 
 
+def _get_usage_stats() -> dict:
+    """
+    聚合统计所有用户的使用数据，不读取辩论具体内容。
+    返回：用户数、总辩论场次、总轮数、活跃用户、最近7天活跃数
+    """
+    import glob
+    from collections import defaultdict
+
+    base = "debate_history"
+    stats = {
+        "total_users": 0,
+        "total_debates": 0,
+        "total_rounds": 0,
+        "user_debate_counts": {},   # {username: 场次}
+        "daily_counts": defaultdict(int),  # {日期: 场次}
+    }
+
+    if not os.path.exists(base):
+        return stats
+
+    user_dirs = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
+    stats["total_users"] = len(user_dirs)
+
+    for user in user_dirs:
+        user_path = os.path.join(base, user)
+        files = glob.glob(os.path.join(user_path, "*.json"))
+        count = 0
+        for fp in files:
+            try:
+                with open(fp, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                stats["total_rounds"] += data.get("debate_round", 0)
+                date = data.get("create_time", "")[:10]
+                if date:
+                    stats["daily_counts"][date] += 1
+                count += 1
+            except Exception:
+                continue
+        stats["user_debate_counts"][user] = count
+        stats["total_debates"] += count
+
+    return stats
+
+
 def render_admin_panel():
     if not is_admin():
         return
     with st.expander("🛡️ 管理员面板", expanded=False):
-        users = _load_users()
-        st.caption(f"当前注册用户数：{len(users)}")
-        for uname in list(users.keys()):
-            c1, c2, c3 = st.columns([4, 3, 3])
-            with c1:
-                st.text(uname)
-            with c2:
-                new_pw = st.text_input("新密码", key=f"reset_{uname}", placeholder="留空不改")
-                if st.button("重置", key=f"do_reset_{uname}"):
-                    if new_pw and len(new_pw) >= 6:
-                        users[uname]["password"] = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
-                        _save_users(users)
-                        st.success(f"{uname} 密码已重置")
-                    else:
-                        st.warning("密码至少 6 位")
-            with c3:
-                if uname != ADMIN_USER:
-                    if st.button("删除", key=f"del_user_{uname}"):
-                        del users[uname]
-                        _save_users(users)
-                        st.rerun()
+        tab_stats, tab_users = st.tabs(["📊 使用统计", "👥 用户管理"])
+
+        with tab_stats:
+            stats = _get_usage_stats()
+
+            # 核心指标
+            m1, m2, m3 = st.columns(3)
+            m1.metric("注册用户数", stats["total_users"])
+            m2.metric("总辩论场次", stats["total_debates"])
+            m3.metric("总辩论轮数", stats["total_rounds"])
+
+            # 各用户场次（不显示内容）
+            if stats["user_debate_counts"]:
+                st.markdown("**各用户辩论场次**")
+                import pandas as pd
+                df_users = pd.DataFrame(
+                    [(u, c) for u, c in stats["user_debate_counts"].items()],
+                    columns=["用户", "场次"]
+                ).sort_values("场次", ascending=False)
+                st.bar_chart(df_users.set_index("用户"))
+
+            # 每日活跃趋势
+            if stats["daily_counts"]:
+                st.markdown("**每日辩论场次趋势**")
+                import pandas as pd
+                df_daily = pd.DataFrame(
+                    sorted(stats["daily_counts"].items()),
+                    columns=["日期", "场次"]
+                ).set_index("日期")
+                st.line_chart(df_daily)
+
+        with tab_users:
+            users = _load_users()
+            st.caption(f"当前注册用户数：{len(users)}")
+            for uname in list(users.keys()):
+                c1, c2, c3 = st.columns([4, 3, 3])
+                with c1:
+                    st.text(uname)
+                with c2:
+                    new_pw = st.text_input("新密码", key=f"reset_{uname}", placeholder="留空不改")
+                    if st.button("重置", key=f"do_reset_{uname}"):
+                        if new_pw and len(new_pw) >= 6:
+                            users[uname]["password"] = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
+                            _save_users(users)
+                            st.success(f"{uname} 密码已重置")
+                        else:
+                            st.warning("密码至少 6 位")
+                with c3:
+                    if uname != ADMIN_USER:
+                        if st.button("删除", key=f"del_user_{uname}"):
+                            del users[uname]
+                            _save_users(users)
+                            st.rerun()
 
 
 def logout():

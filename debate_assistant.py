@@ -75,7 +75,16 @@ if not st.session_state.custom_agents:
     st.session_state.custom_agents = load_agent_config()
 
 # ===================== Prompt =====================
-def get_debate_prompt(agent_prompt):
+def get_debate_prompt(agent_prompt, is_first_round=False):
+    if is_first_round:
+        return agent_prompt + """
+【辩论规则】
+这是第一轮，还没有其他人发言。请直接从你的立场出发，陈述你对这个议题最核心的观点。
+1. 不要假设或捏造其他人的观点。
+2. 核心理由、关键结论必须用Markdown加粗。
+3. 语言自然、像真人，不要机器腔。
+4. 控制在150字以内，简明扼要。
+"""
     return agent_prompt + """
 【辩论规则】
 1. 先直接回应上一轮的内容，必须反驳或承接，不能自说自话。
@@ -360,13 +369,14 @@ with st.sidebar:
 if run_debate:
     st.session_state.debate_round += 1
     r        = st.session_state.debate_round
+    is_first = (r == 1)
     hist_ctx = format_history_recent(st.session_state.debate_history)
     st.subheader(f"📢 第{r}轮辩论")
     batch = []
     for agent in st.session_state.custom_agents:
         st.markdown(f"### 🗣 {agent['name']}")
         with st.spinner("思考中..."):
-            content = call_llm(get_debate_prompt(agent["prompt"]), hist_ctx)
+            content = call_llm(get_debate_prompt(agent["prompt"], is_first_round=is_first), hist_ctx)
         st.markdown(content)
         st.divider()
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
