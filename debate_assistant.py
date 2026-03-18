@@ -354,12 +354,11 @@ has_topic   = bool(st.session_state.topic)
 has_history = bool(st.session_state.debate_history)
 
 btn_label = "🚀 开始辩论" if st.session_state.debate_round == 0 else "🔁 继续辩论"
-c1, c2, c3 = st.columns(3)
-with c1: run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic)
-with c2: interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
-with c3: do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history)
+run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic, type="primary")
+interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
+do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history)
 
-# ===================== 用户插嘴区（有辩论历史时显示） =====================
+# ===================== 用户发言区（有辩论历史时显示） =====================
 if has_history:
     st.markdown("""
     <div style="border: 2px solid #4f8bf9; border-radius: 12px; padding: 1rem 1.2rem; margin: 0.5rem 0 1rem 0; background: rgba(79,139,249,0.06);">
@@ -368,39 +367,33 @@ if has_history:
     </div>
     """, unsafe_allow_html=True)
     agent_names = [a["name"] for a in st.session_state.custom_agents]
-    col_sel, col_input = st.columns([1, 3])
-    with col_sel:
-        target = st.selectbox("发言对象", ["全体"] + agent_names, key="user_speech_target")
-    with col_input:
-        user_input = st.text_area("你的观点", height=80, placeholder="例如：我觉得支持派忽略了一个关键问题……",
-                                  key="user_speech_input", label_visibility="collapsed")
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        if st.button("✅ 提交发言，下一轮 AI 回应我", use_container_width=True, type="primary"):
-            if user_input.strip():
-                st.session_state.pending_user_speech = {
-                    "target":  target,
-                    "content": user_input.strip(),
-                    "round":   st.session_state.debate_round,
-                }
-                st.session_state.debate_history.append({
-                    "type":    "user_speech",
-                    "round":   st.session_state.debate_round,
-                    "name":    "用户",
-                    "target":  target,
-                    "content": f"（对{target}）{user_input.strip()}",
-                })
-                st.success("✅ 已提交，点击「继续辩论」让 AI 回应你")
-            else:
-                st.warning("请输入内容")
-    with col_b:
-        if st.button("取消", use_container_width=True):
-            st.session_state.pending_user_speech = None
-            st.session_state.debate_history = [
-                x for x in st.session_state.debate_history
-                if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
-            ]
-            st.rerun()
+    target = st.selectbox("发言对象", ["全体"] + agent_names, key="user_speech_target")
+    user_input = st.text_area("你的观点", height=80, placeholder="例如：我觉得支持派忽略了一个关键问题……",
+                              key="user_speech_input")
+    if st.button("✅ 提交发言，下一轮 AI 回应我", use_container_width=True, type="primary"):
+        if user_input.strip():
+            st.session_state.pending_user_speech = {
+                "target":  target,
+                "content": user_input.strip(),
+                "round":   st.session_state.debate_round,
+            }
+            st.session_state.debate_history.append({
+                "type":    "user_speech",
+                "round":   st.session_state.debate_round,
+                "name":    "用户",
+                "target":  target,
+                "content": f"（对{target}）{user_input.strip()}",
+            })
+            st.success("✅ 已提交，点击「继续辩论」让 AI 回应你")
+        else:
+            st.warning("请输入内容")
+    if st.button("取消发言", use_container_width=True):
+        st.session_state.pending_user_speech = None
+        st.session_state.debate_history = [
+            x for x in st.session_state.debate_history
+            if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
+        ]
+        st.rerun()
 
 st.divider()
 

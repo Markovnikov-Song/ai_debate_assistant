@@ -90,19 +90,25 @@ def is_admin() -> bool:
 
 
 def _restore_from_cookie():
-    """页面加载时从 cookie 恢复登录，必须验证签名"""
-    if st.session_state.get("logged_in"):
-        return
+    """页面加载时从 cookie 恢复登录，每次都验证签名，不信任 session state 缓存"""
     try:
-        token    = _cookie.get(COOKIE_KEY)
+        token = _cookie.get(COOKIE_KEY)
         if not token:
+            # 没有 cookie，强制清除 session（防止 session 复用）
+            st.session_state.logged_in    = False
+            st.session_state.current_user = ""
             return
         username = _verify_token(token)
         if username and username in _load_users():
             st.session_state.logged_in    = True
             st.session_state.current_user = username
+        else:
+            # token 无效或用户不存在，清除
+            st.session_state.logged_in    = False
+            st.session_state.current_user = ""
     except Exception:
-        pass
+        st.session_state.logged_in    = False
+        st.session_state.current_user = ""
 
 
 def _get_usage_stats() -> dict:
