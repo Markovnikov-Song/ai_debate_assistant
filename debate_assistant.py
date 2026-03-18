@@ -7,6 +7,7 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+
 # ===================== 基础配置 =====================
 API_KEY = "sk-dwydkdynhxcrnajjpzvbjpyyfinzecaqfyxpszbexrohoqzg"
 BASE_URL = "https://api.siliconflow.cn/v1"
