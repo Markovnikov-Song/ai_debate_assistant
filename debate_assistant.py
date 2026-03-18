@@ -400,7 +400,7 @@ if has_history:
                 x for x in st.session_state.debate_history
                 if not (x["type"] == "user_speech" and x["round"] == st.session_state.debate_round)
             ]
-                st.rerun()
+            st.rerun()
 
 st.divider()
 
