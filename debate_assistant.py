@@ -6,19 +6,21 @@ import random
 from datetime import datetime
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from auth import render_auth_page
+from dotenv import load_dotenv
+from auth import render_auth_page, render_admin_panel
+
+load_dotenv()
 
 # ===================== 登录拦截 =====================
 if not render_auth_page():
     st.stop()
 
-# ===================== 基础配置 =====================
-API_KEY  = "sk-dwydkdynhxcrnajjpzvbjpyyfinzecaqfyxpszbexrohoqzg"
-BASE_URL = "https://api.siliconflow.cn/v1"
-MODEL    = "deepseek-ai/DeepSeek-V3.2"
+# ===================== 基础配置（从 .env 读取） =====================
+API_KEY  = os.getenv("API_KEY",  "your-api-key-here")
+BASE_URL = os.getenv("BASE_URL", "https://api.siliconflow.cn/v1")
+MODEL    = os.getenv("MODEL",    "deepseek-ai/DeepSeek-V3.2")
 
-# 存储配置：每个用户独立文件夹
-CURRENT_USER  = st.session_state.get("current_user", "guest")
+CURRENT_USER   = st.session_state.get("current_user", "guest")
 HISTORY_FOLDER = os.path.join("debate_history", CURRENT_USER)
 if not os.path.exists(HISTORY_FOLDER):
     os.makedirs(HISTORY_FOLDER)
@@ -40,20 +42,22 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ===================== 会话状态初始化（必须在渲染前） =====================
-if "topic"              not in st.session_state: st.session_state.topic = ""
-if "user_context"       not in st.session_state: st.session_state.user_context = ""
-if "debate_history"     not in st.session_state: st.session_state.debate_history = []
-if "debate_round"       not in st.session_state: st.session_state.debate_round = 0
-if "current_history_id" not in st.session_state: st.session_state.current_history_id = None
-if "custom_agents"      not in st.session_state: st.session_state.custom_agents = []
+# ===================== 会话状态初始化 =====================
+defaults = {
+    "topic": "", "user_context": "", "debate_history": [],
+    "debate_round": 0, "current_history_id": None,
+    "custom_agents": [], "interrupt_rounds": 3,
+    "last_summary": "",   # 存最新一次总结
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ===================== 角色配置 =====================
 def load_agent_config():
-    user     = st.session_state.get("current_user", "guest")
-    cfg_file = f"agent_config_{user}.json"
-    if os.path.exists(cfg_file):
-        with open(cfg_file, "r", encoding="utf-8") as f:
+    cfg = f"agent_config_{st.session_state.get('current_user','guest')}.json"
+    if os.path.exists(cfg):
+        with open(cfg, "r", encoding="utf-8") as f:
             return json.load(f)
     return [
         {"name": "支持派",     "prompt": "你是立场鲜明的支持派，说话像真实大学生一样自然、有逻辑、有情绪，但不偏激。先承接上一轮内容，针对性反驳对方，再讲自己的观点。核心理由、关键结论必须加粗。"},
@@ -63,9 +67,8 @@ def load_agent_config():
     ]
 
 def save_agent_config(agents):
-    user     = st.session_state.get("current_user", "guest")
-    cfg_file = f"agent_config_{user}.json"
-    with open(cfg_file, "w", encoding="utf-8") as f:
+    cfg = f"agent_config_{st.session_state.get('current_user','guest')}.json"
+    with open(cfg, "w", encoding="utf-8") as f:
         json.dump(agents, f, ensure_ascii=False, indent=2)
 
 if not st.session_state.custom_agents:
@@ -105,20 +108,37 @@ SUMMARIZER_PROMPT = """
 """
 
 # ===================== 存储函数 =====================
+def auto_save():
+    """每轮结束后静默自动保存，覆盖同一议题的上次记录"""
+    if not st.session_state.topic or not st.session_state.debate_history:
+        return
+    # 用固定文件名（议题key），每次覆盖，不产生重复文件
+    topic_key = st.session_state.topic[:20].replace(" ","_").replace("？","_").replace("?","_")
+    filename  = f"auto_{topic_key}.json"
+    data = {
+        "id": filename, "topic": st.session_state.topic,
+        "user_context": st.session_state.user_context,
+        "debate_round": st.session_state.debate_round,
+        "create_time":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "debate_content": st.session_state.debate_history,
+        "agents_used":  st.session_state.custom_agents,
+    }
+    with open(os.path.join(HISTORY_FOLDER, filename), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
 def save_debate_history():
     if not st.session_state.topic or not st.session_state.debate_history:
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    topic_key = st.session_state.topic[:12].replace(" ", "_").replace("？","_").replace("?","_")
+    topic_key = st.session_state.topic[:12].replace(" ","_").replace("？","_").replace("?","_")
     filename  = f"{timestamp}_{topic_key}.json"
     data = {
-        "id":            filename,
-        "topic":         st.session_state.topic,
-        "user_context":  st.session_state.user_context,
-        "debate_round":  st.session_state.debate_round,
-        "create_time":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "id": filename, "topic": st.session_state.topic,
+        "user_context": st.session_state.user_context,
+        "debate_round": st.session_state.debate_round,
+        "create_time":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "debate_content": st.session_state.debate_history,
-        "agents_used":   st.session_state.custom_agents,
+        "agents_used":  st.session_state.custom_agents,
     }
     with open(os.path.join(HISTORY_FOLDER, filename), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -136,6 +156,7 @@ def load_debate_history(filename):
     st.session_state.debate_round       = data["debate_round"]
     st.session_state.debate_history     = data["debate_content"]
     st.session_state.current_history_id = filename
+    st.session_state.last_summary       = ""
     if "agents_used" in data:
         st.session_state.custom_agents = data["agents_used"]
     st.rerun()
@@ -146,12 +167,12 @@ def get_all_history():
     return files
 
 def get_history_label(filename):
-    """把文件名解析成可读标签：议题 + 时间"""
     path = os.path.join(HISTORY_FOLDER, filename)
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return f"{data.get('topic','未知议题')[:16]}  [{data.get('create_time','')[:16]}]"
+        prefix = "🔄 " if filename.startswith("auto_") else ""
+        return f"{prefix}{data.get('topic','未知议题')[:16]}  [{data.get('create_time','')[:16]}]"
     except Exception:
         return filename
 
@@ -160,11 +181,8 @@ def delete_history(filename):
     if os.path.exists(path):
         os.remove(path)
         if st.session_state.current_history_id == filename:
-            st.session_state.topic = ""
-            st.session_state.user_context = ""
-            st.session_state.debate_round = 0
-            st.session_state.debate_history = []
-            st.session_state.current_history_id = None
+            for k, v in {"topic":"","user_context":"","debate_history":[],"debate_round":0,"current_history_id":None}.items():
+                st.session_state[k] = v
         st.rerun()
 
 # ===================== 导出 Word =====================
@@ -188,6 +206,9 @@ def export_to_word():
             p.add_run(f"{item['name']}：").bold = True
             p.add_run(item["content"].replace("**", ""))
             doc.add_paragraph()
+    if st.session_state.last_summary:
+        doc.add_heading("三、决策总结", level=1)
+        doc.add_paragraph(st.session_state.last_summary.replace("**", ""))
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
@@ -195,25 +216,19 @@ def export_to_word():
 
 # ===================== AI 调用 =====================
 def format_history_recent(hist, last_n_rounds=2):
-    """只取最近 N 轮，避免 context 过长"""
-    if not hist:
-        return ""
-    max_r   = max(x["round"] for x in hist)
-    cutoff  = max(1, max_r - last_n_rounds + 1)
-    out     = ""
-    for item in hist:
-        if item["round"] < cutoff:
-            continue
-        if item["type"] == "agent_speech":
-            out += f"第{item['round']}轮 - {item['name']}：{item['content']}\n\n"
-    return out
+    if not hist: return ""
+    max_r  = max(x["round"] for x in hist)
+    cutoff = max(1, max_r - last_n_rounds + 1)
+    return "".join(
+        f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n"
+        for x in hist if x["round"] >= cutoff and x["type"] == "agent_speech"
+    )
 
 def format_history_full(hist):
-    out = ""
-    for item in hist:
-        if item["type"] == "agent_speech":
-            out += f"第{item['round']}轮 - {item['name']}：{item['content']}\n\n"
-    return out
+    return "".join(
+        f"第{x['round']}轮 - {x['name']}：{x['content']}\n\n"
+        for x in hist if x["type"] == "agent_speech"
+    )
 
 def call_llm(prompt, history_context="", max_tokens=400):
     context = f"核心辩论议题：{st.session_state.topic}\n"
@@ -238,52 +253,53 @@ def call_llm(prompt, history_context="", max_tokens=400):
 st.title("🎯 超级多智能体辩论决策助手")
 st.divider()
 
-topic_input = st.text_area(
+st.session_state.topic = st.text_area(
     "💬 输入你的辩论议题",
     value=st.session_state.topic,
     placeholder="例如：大学生是否应该考研？  /  远程办公利大于弊吗？",
     height=100,
-)
-st.session_state.topic = topic_input.strip()
+).strip()
 
-ctx_input = st.text_area(
+st.session_state.user_context = st.text_area(
     "📌 补充条件（可选）",
     value=st.session_state.user_context,
     placeholder="例如：我是大三学生，目标985，家庭条件一般……",
     height=80,
-)
-st.session_state.user_context = ctx_input.strip()
+).strip()
 
-# 辩论操作按钮放主页面
+# 操作按钮
 has_topic   = bool(st.session_state.topic)
 has_history = bool(st.session_state.debate_history)
-c1, c2, c3, c4 = st.columns(4)
-with c1: start     = st.button("🚀 开始",   use_container_width=True, disabled=not has_topic)
-with c2: cont      = st.button("🔁 继续",   use_container_width=True, disabled=not has_history)
-with c3: interrupt = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
-with c4: summary   = st.button("📊 总结",   use_container_width=True)
+
+# 开始/继续合并为一个按钮
+btn_label = "🚀 开始辩论" if st.session_state.debate_round == 0 else "🔁 继续辩论"
+c1, c2, c3 = st.columns(3)
+with c1: run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic)
+with c2: interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
+with c3: do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history)
 
 st.divider()
 
-# ===================== 侧边栏（设置 & 历史） =====================
+# ===================== 侧边栏 =====================
 with st.sidebar:
     st.header("⚙️ 设置")
     st.caption(f"👤 {CURRENT_USER}")
     if st.button("登出", use_container_width=True):
-        st.session_state.logged_in   = False
+        st.session_state.logged_in    = False
         st.session_state.current_user = ""
         st.rerun()
+
+    # 管理员面板（仅管理员可见）
+    render_admin_panel()
 
     st.markdown("---")
     st.markdown("### 🎭 角色管理")
     with st.expander("展开编辑角色"):
         for i, agent in enumerate(st.session_state.custom_agents):
-            col1, col2, col3 = st.columns([3, 6, 1])
-            with col1:
-                new_name = st.text_input(f"角色{i+1}名", value=agent["name"], key=f"name_{i}")
-            with col2:
-                new_prompt = st.text_area(f"角色{i+1}人设", value=agent["prompt"], key=f"prompt_{i}", height=80)
-            with col3:
+            c1, c2, c3 = st.columns([3, 6, 1])
+            with c1: new_name   = st.text_input(f"角色{i+1}名", value=agent["name"],   key=f"name_{i}")
+            with c2: new_prompt = st.text_area(f"角色{i+1}人设", value=agent["prompt"], key=f"prompt_{i}", height=80)
+            with c3:
                 if st.button("🗑️", key=f"del_{i}"):
                     st.session_state.custom_agents.pop(i)
                     save_agent_config(st.session_state.custom_agents)
@@ -300,6 +316,13 @@ with st.sidebar:
             st.success("已保存")
 
     st.markdown("---")
+    st.markdown("### ⚡ 自由辩设置")
+    st.session_state.interrupt_rounds = st.slider(
+        "打断次数", min_value=1, max_value=6,
+        value=st.session_state.interrupt_rounds
+    )
+
+    st.markdown("---")
     st.markdown("### 💾 导出与历史")
     word_bytes, word_filename = export_to_word()
     if word_bytes:
@@ -309,25 +332,23 @@ with st.sidebar:
     else:
         st.button("📄 导出 Word", disabled=True, use_container_width=True)
 
-    if st.button("💾 保存辩论", use_container_width=True):
+    if st.button("💾 手动保存", use_container_width=True):
         f = save_debate_history()
-        if f: st.success(f"已保存")
+        if f: st.success("已保存")
 
     if st.button("🧹 清空当前", use_container_width=True):
-        st.session_state.topic = ""
-        st.session_state.user_context = ""
-        st.session_state.debate_history = []
-        st.session_state.debate_round = 0
-        st.session_state.current_history_id = None
+        for k, v in {"topic":"","user_context":"","debate_history":[],"debate_round":0,
+                     "current_history_id":None,"last_summary":""}.items():
+            st.session_state[k] = v
         st.rerun()
 
     st.markdown("---")
     st.markdown("### 📜 历史记录")
     histories = get_all_history()
     if histories:
-        labels      = {f: get_history_label(f) for f in histories}
-        selected    = st.selectbox("选择记录", histories, format_func=lambda f: labels[f])
-        hc1, hc2   = st.columns(2)
+        labels   = {f: get_history_label(f) for f in histories}
+        selected = st.selectbox("选择记录", histories, format_func=lambda f: labels[f])
+        hc1, hc2 = st.columns(2)
         with hc1:
             if st.button("🔄 加载", use_container_width=True):
                 load_debate_history(selected)
@@ -338,7 +359,7 @@ with st.sidebar:
         st.info("暂无历史记录")
 
 # ===================== 辩论逻辑 =====================
-if start:
+if run_debate:
     st.session_state.debate_round += 1
     r        = st.session_state.debate_round
     hist_ctx = format_history_recent(st.session_state.debate_history)
@@ -352,33 +373,18 @@ if start:
         st.divider()
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
     st.session_state.debate_history.extend(batch)
-    st.success(f"✅ 第{r}轮完成")
-
-if cont:
-    st.session_state.debate_round += 1
-    r        = st.session_state.debate_round
-    hist_ctx = format_history_recent(st.session_state.debate_history)
-    st.subheader(f"📢 第{r}轮（继续辩论）")
-    batch = []
-    for agent in st.session_state.custom_agents:
-        st.markdown(f"### 🗣 {agent['name']}")
-        with st.spinner("思考中..."):
-            content = call_llm(get_debate_prompt(agent["prompt"]), hist_ctx)
-        st.markdown(content)
-        st.divider()
-        batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
-    st.session_state.debate_history.extend(batch)
-    st.success(f"✅ 第{r}轮完成")
+    auto_save()  # 自动保存
+    st.success(f"✅ 第{r}轮完成（已自动保存）")
 
 if interrupt:
     st.session_state.debate_round += 1
-    r            = st.session_state.debate_round
-    hist_ctx     = format_history_recent(st.session_state.debate_history)
+    r             = st.session_state.debate_round
+    hist_ctx      = format_history_recent(st.session_state.debate_history)
     last_speeches = [x for x in st.session_state.debate_history if x["type"] == "agent_speech"]
     st.subheader(f"⚡ 第{r}轮（自由辩·打断/追问）")
     batch          = []
     current_target = last_speeches[-1] if last_speeches else None
-    for _ in range(3):
+    for _ in range(st.session_state.interrupt_rounds):
         if not current_target:
             break
         other_agents = [a for a in st.session_state.custom_agents if a["name"] != current_target["name"]]
@@ -397,14 +403,26 @@ if interrupt:
                       "content": f"（打断{current_target['name']}）{content}"})
         current_target = {"name": attacker["name"], "content": content}
     st.session_state.debate_history.extend(batch)
-    st.success("✅ 自由辩环节完成")
+    auto_save()
+    st.success("✅ 自由辩环节完成（已自动保存）")
 
-if summary:
+if do_summary:
     st.subheader("📊 最终决策总结")
     with st.spinner("生成总结中..."):
-        full_ctx = format_history_full(st.session_state.debate_history)
-        res      = call_llm(SUMMARIZER_PROMPT, full_ctx, max_tokens=800)
+        res = call_llm(SUMMARIZER_PROMPT, format_history_full(st.session_state.debate_history), max_tokens=800)
+    st.session_state.last_summary = res  # 存起来，导出 Word 时一并写入
     st.markdown(res)
+    if st.button("🔄 重新生成总结"):
+        st.session_state.last_summary = ""
+        st.rerun()
+
+# 如果已有总结但没有触发按钮，也展示出来
+elif st.session_state.last_summary:
+    st.subheader("📊 最终决策总结")
+    st.markdown(st.session_state.last_summary)
+    if st.button("🔄 重新生成总结"):
+        st.session_state.last_summary = ""
+        st.rerun()
 
 # ===================== 辩论记录展示 =====================
 st.divider()
@@ -418,4 +436,4 @@ if st.session_state.debate_history:
                 st.markdown(it["content"])
                 st.markdown("---")
 else:
-    st.info("还未开始辩论，输入议题后点击「🚀 开始」")
+    st.info("还未开始辩论，输入议题后点击「🚀 开始辩论」")
