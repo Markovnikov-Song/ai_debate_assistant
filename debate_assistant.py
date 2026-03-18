@@ -317,7 +317,7 @@ with st.sidebar:
 
     # 1. 语速调节已移除（原为无效延迟）
 
-    st.markdown("---")    st.markdown("---")
+    st.markdown("---")
 
     # 3. 自定义角色（新增）
     st.markdown("### 🎭 角色管理")
