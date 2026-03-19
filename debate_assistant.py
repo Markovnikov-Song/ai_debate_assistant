@@ -11,6 +11,39 @@ from auth import render_auth_page, render_admin_panel, logout
 
 load_dotenv()
 
+# ===================== 网页搜索功能 =====================
+def search_web(topic: str, max_results: int = 5):
+    """
+    搜索辩论议题相关的网络信息
+    返回搜索结果的摘要
+    """
+    try:
+        # 构建搜索查询
+        search_query = f"{topic} 观点 争议 论据"
+        
+        # 使用web_search工具搜索
+        results = web_search(
+            query=search_query,
+            intent="收集辩论议题相关的各方观点、数据支持和争议点",
+            expected="返回包含正反双方观点、相关数据、案例和争议点的搜索结果",
+            num=max_results
+        )
+        
+        # 提取关键信息
+        summaries = []
+        if results and isinstance(results, list):
+            for item in results[:max_results]:
+                if isinstance(item, dict):
+                    title = item.get('title', '')
+                    snippet = item.get('snippet', '')
+                    url = item.get('url', '')
+                    if snippet:
+                        summaries.append(f"• {title}\n  {snippet}\n")
+        
+        return "\n".join(summaries) if summaries else "未找到相关信息"
+    except Exception as e:
+        return f"搜索功能暂时不可用：{str(e)}"
+
 # ===================== 登录拦截 =====================
 if not render_auth_page():
     st.stop()
@@ -49,6 +82,8 @@ defaults = {
     "custom_agents": [], "interrupt_rounds": 3,
     "last_summary": "",
     "pending_user_speech": None,  # 待注入的用户插嘴 {target, content}
+    "search_results": "",  # 网络搜索结果
+    "enable_search": True,  # 是否启用网页搜索
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -316,6 +351,11 @@ def call_llm(prompt, history_context="", max_tokens=400):
     context = f"核心辩论议题：{st.session_state.topic}\n"
     if st.session_state.user_context:
         context += f"用户补充条件：{st.session_state.user_context}\n"
+    
+    # 添加搜索结果作为背景信息
+    if st.session_state.get('search_results'):
+        context += f"【网络搜索参考信息】\n{st.session_state.search_results}\n\n"
+    
     if history_context:
         context += f"近期辩论内容：\n{history_context}\n"
     context += f"你的任务：{prompt}"
@@ -438,6 +478,17 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.markdown("### 🔍 网页搜索")
+    st.session_state.enable_search = st.checkbox(
+        "启用网页搜索辅助辩论",
+        value=st.session_state.enable_search,
+        help="启用后，AI会在第一轮辩论前搜索相关网络信息，以提供更充分的论据支持"
+    )
+    if st.session_state.search_results and st.session_state.enable_search:
+        with st.expander("查看搜索结果"):
+            st.markdown(st.session_state.search_results)
+
+    st.markdown("---")
     st.markdown("### 💾 导出与历史")
     word_bytes, word_filename = export_to_word()
     if word_bytes:
@@ -482,6 +533,16 @@ if run_debate:
     user_speech = st.session_state.pending_user_speech  # 取出待处理的用户发言
 
     st.subheader(f"📢 第{r}轮辩论")
+
+    # 如果是第一轮且启用了搜索，先进行网页搜索
+    if is_first and st.session_state.enable_search and not st.session_state.search_results:
+        with st.spinner("🔍 正在搜索网络资料以辅助辩论..."):
+            st.session_state.search_results = search_web(st.session_state.topic)
+        
+        # 显示搜索结果
+        if st.session_state.search_results and "搜索功能暂时不可用" not in st.session_state.search_results:
+            with st.expander("🌐 网络搜索参考信息", expanded=False):
+                st.markdown(st.session_state.search_results)
 
     # 如果有用户插嘴，先展示出来
     if user_speech:
