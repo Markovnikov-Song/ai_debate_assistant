@@ -12,20 +12,32 @@ from auth import render_auth_page, render_admin_panel, logout
 load_dotenv()
 
 # ===================== 网页搜索功能 =====================
-def search_web(topic: str, max_results: int = 5):
+def search_web(topic: str, max_results: int = 5, target_content: str = None):
     """
     搜索辩论议题相关的网络信息
+    topic: 辩论议题
+    max_results: 最大结果数
+    target_content: 目标内容（用于针对性搜索，如反驳某个观点）
     返回搜索结果的摘要
     """
     try:
         # 构建搜索查询
-        search_query = f"{topic} 观点 争议 论据"
+        if target_content:
+            # 针对特定内容进行搜索（如反驳观点）
+            search_query = f"{topic} {target_content[:50]} 反驳 数据 案例"
+            intent = f"针对'{target_content[:30]}...'这个观点，寻找反驳论据和相关数据"
+            expected = "返回可以反驳或支持该观点的具体数据、案例和研究"
+        else:
+            # 搜索议题相关的各方观点
+            search_query = f"{topic} 观点 争议 论据"
+            intent = "收集辩论议题相关的各方观点、数据支持和争议点"
+            expected = "返回包含正反双方观点、相关数据、案例和争议点的搜索结果"
         
         # 使用web_search工具搜索
         results = web_search(
             query=search_query,
-            intent="收集辩论议题相关的各方观点、数据支持和争议点",
-            expected="返回包含正反双方观点、相关数据、案例和争议点的搜索结果",
+            intent=intent,
+            expected=expected,
             num=max_results
         )
         
@@ -82,7 +94,7 @@ defaults = {
     "custom_agents": [], "interrupt_rounds": 3,
     "last_summary": "",
     "pending_user_speech": None,  # 待注入的用户插嘴 {target, content}
-    "search_results": "",  # 网络搜索结果
+    "search_results": {},  # 网络搜索结果，按轮次存储 {round_num: results}
     "enable_search": True,  # 是否启用网页搜索
 }
 for k, v in defaults.items():
@@ -347,14 +359,14 @@ def format_history_full(hist):
             lines.append(f"第{x['round']}轮 - 【用户插嘴{x.get('target','')}】：{x['content']}\n\n")
     return "".join(lines)
 
-def call_llm(prompt, history_context="", max_tokens=400):
+def call_llm(prompt, history_context="", max_tokens=400, round_num=None):
     context = f"核心辩论议题：{st.session_state.topic}\n"
     if st.session_state.user_context:
         context += f"用户补充条件：{st.session_state.user_context}\n"
     
-    # 添加搜索结果作为背景信息
-    if st.session_state.get('search_results'):
-        context += f"【网络搜索参考信息】\n{st.session_state.search_results}\n\n"
+    # 添加当前轮次的搜索结果作为背景信息
+    if round_num and st.session_state.get('search_results') and round_num in st.session_state.search_results:
+        context += f"【本轮网络搜索参考信息】\n{st.session_state.search_results[round_num]}\n\n"
     
     if history_context:
         context += f"近期辩论内容：\n{history_context}\n"
@@ -482,11 +494,14 @@ with st.sidebar:
     st.session_state.enable_search = st.checkbox(
         "启用网页搜索辅助辩论",
         value=st.session_state.enable_search,
-        help="启用后，AI会在第一轮辩论前搜索相关网络信息，以提供更充分的论据支持"
+        help="启用后，AI会在每轮辩论（包括反驳）前搜索相关网络信息，以提供更充分的论据支持"
     )
     if st.session_state.search_results and st.session_state.enable_search:
-        with st.expander("查看搜索结果"):
-            st.markdown(st.session_state.search_results)
+        with st.expander("查看各轮搜索结果"):
+            for round_num, results in sorted(st.session_state.search_results.items()):
+                st.markdown(f"**第{round_num}轮**：")
+                st.markdown(results)
+                st.markdown("---")
 
     st.markdown("---")
     st.markdown("### 💾 导出与历史")
@@ -534,15 +549,17 @@ if run_debate:
 
     st.subheader(f"📢 第{r}轮辩论")
 
-    # 如果是第一轮且启用了搜索，先进行网页搜索
-    if is_first and st.session_state.enable_search and not st.session_state.search_results:
+    # 如果启用了搜索，进行网页搜索
+    if st.session_state.enable_search:
         with st.spinner("🔍 正在搜索网络资料以辅助辩论..."):
-            st.session_state.search_results = search_web(st.session_state.topic)
+            # 如果有用户发言，针对用户发言进行搜索
+            search_target = user_speech['content'] if user_speech else None
+            st.session_state.search_results[r] = search_web(st.session_state.topic, target_content=search_target)
         
         # 显示搜索结果
-        if st.session_state.search_results and "搜索功能暂时不可用" not in st.session_state.search_results:
-            with st.expander("🌐 网络搜索参考信息", expanded=False):
-                st.markdown(st.session_state.search_results)
+        if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
+            with st.expander(f"🌐 第{r}轮网络搜索参考信息", expanded=False):
+                st.markdown(st.session_state.search_results[r])
 
     # 如果有用户插嘴，先展示出来
     if user_speech:
@@ -561,7 +578,7 @@ if run_debate:
                 )
             else:
                 prompt = get_debate_prompt(agent["prompt"], is_first_round=is_first)
-            content = call_llm(prompt, hist_ctx)
+            content = call_llm(prompt, hist_ctx, round_num=r)
         st.markdown(content)
         st.divider()
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
@@ -579,6 +596,20 @@ if interrupt:
     st.subheader(f"⚡ 第{r}轮（自由辩·打断/追问）")
     batch          = []
     current_target = last_speeches[-1] if last_speeches else None
+    
+    # 自由辩时进行针对性搜索
+    if st.session_state.enable_search and current_target:
+        with st.spinner("🔍 正在搜索反驳资料..."):
+            st.session_state.search_results[r] = search_web(
+                st.session_state.topic, 
+                target_content=current_target["content"]
+            )
+        
+        # 显示搜索结果
+        if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
+            with st.expander(f"🌐 第{r}轮反驳搜索参考信息", expanded=False):
+                st.markdown(st.session_state.search_results[r])
+    
     for _ in range(st.session_state.interrupt_rounds):
         if not current_target:
             break
@@ -590,7 +621,8 @@ if interrupt:
         with st.spinner("组织语言中..."):
             content = call_llm(
                 get_interrupt_prompt(attacker["prompt"], current_target["name"], current_target["content"][:300]),
-                hist_ctx
+                hist_ctx,
+                round_num=r
             )
         st.markdown(content)
         st.divider()
