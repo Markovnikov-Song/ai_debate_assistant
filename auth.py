@@ -75,8 +75,10 @@ def _get_usage_stats() -> dict:
         "user_debate_counts": {}, "daily_counts": defaultdict(int),
     }
     users = load_users()
-    stats["total_users"] = len(users)
+    stats["total_users"] = len([u for u in users if u != ADMIN_USER])
     for user in users:
+        if user == ADMIN_USER:
+            continue
         files = list_debates(user)
         count = 0
         for fname in files:
@@ -120,6 +122,8 @@ def _render_topic_wordcloud():
         users  = load_users()
         topics = []
         for user in users:
+            if user == ADMIN_USER:
+                continue
             for fname in list_debates(user):
                 try:
                     data = load_debate(user, fname)
@@ -141,7 +145,12 @@ def _render_topic_wordcloud():
     if top:
         st.markdown("**热门议题 Top 10**")
         df = pd.DataFrame(top, columns=["议题", "次数"])
-        st.bar_chart(df.set_index("议题"))
+        # 有重复议题才画图，否则直接列表
+        if df["次数"].max() > 1:
+            st.bar_chart(df.set_index("议题"))
+        else:
+            df.index = df.index + 1
+            st.dataframe(df, use_container_width=True)
 
     # 词云
     try:
@@ -152,14 +161,19 @@ def _render_topic_wordcloud():
 
         text = " ".join(jieba.cut(" ".join(topics)))
 
-        # 尝试找系统中文字体
+        # 优先用项目内字体，再找系统字体
+        _base = os.path.dirname(os.path.abspath(__file__))
         font_candidates = [
+            os.path.join(_base, "SourceHanSansSC-Regular.otf"),
             "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/System/Library/Fonts/PingFang.ttc",
             "C:/Windows/Fonts/msyh.ttc",
         ]
         font_path = next((f for f in font_candidates if os.path.exists(f)), None)
+        if not font_path:
+            st.warning("未找到中文字体，词云无法显示中文")
+            return
 
         wc = WordCloud(
             font_path=font_path,
