@@ -746,26 +746,22 @@ with st.sidebar:
     md_bytes,   md_fn   = export_to_markdown()
     word_bytes, word_fn = export_to_word()
     html_bytes, html_fn = export_to_html()
-    ec1, ec2, ec3 = st.columns(3)
-    with ec1:
-        if md_bytes:
-            st.download_button("📝 MD", data=md_bytes, file_name=md_fn,
-                               mime="text/markdown", use_container_width=True)
-        else:
-            st.button("📝 MD", disabled=True, use_container_width=True)
-    with ec2:
-        if word_bytes:
-            st.download_button("📄 Word", data=word_bytes, file_name=word_fn,
-                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                               use_container_width=True)
-        else:
-            st.button("📄 Word", disabled=True, use_container_width=True)
-    with ec3:
-        if html_bytes:
-            st.download_button("🌐 HTML", data=html_bytes, file_name=html_fn,
-                               mime="text/html", use_container_width=True)
-        else:
-            st.button("🌐 HTML", disabled=True, use_container_width=True)
+    if md_bytes:
+        st.download_button("导出 Markdown", data=md_bytes, file_name=md_fn,
+                           mime="text/markdown", use_container_width=True)
+    else:
+        st.button("导出 Markdown", disabled=True, use_container_width=True)
+    if word_bytes:
+        st.download_button("导出 Word", data=word_bytes, file_name=word_fn,
+                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                           use_container_width=True)
+    else:
+        st.button("导出 Word", disabled=True, use_container_width=True)
+    if html_bytes:
+        st.download_button("导出 HTML", data=html_bytes, file_name=html_fn,
+                           mime="text/html", use_container_width=True)
+    else:
+        st.button("导出 HTML", disabled=True, use_container_width=True)
     st.caption("🌐 HTML 用浏览器打开后，Ctrl+P 可转为 PDF")
 
     # ── 历史记录 ──────────────────────────────────────────────────
