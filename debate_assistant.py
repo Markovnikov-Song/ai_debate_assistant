@@ -19,51 +19,102 @@ from github_storage import (
 load_dotenv()
 
 # ===================== 网页搜索功能 =====================
-def search_web(topic: str, max_results: int = 5, target_content: str = None):
-    """用 DuckDuckGo HTML 搜索，无需 API key"""
+def _search_semantic_scholar(query: str, max_results: int = 3) -> list[dict]:
+    """搜索 Semantic Scholar 学术论文摘要"""
     try:
-        if target_content:
-            search_query = f"{topic} {target_content[:50]} 反驳 数据 案例"
-        else:
-            search_query = f"{topic} 观点 争议 论据"
+        params = {"query": query, "limit": max_results, "fields": "title,abstract,year,authors,externalIds"}
+        r = requests.get("https://api.semanticscholar.org/graph/v1/paper/search",
+                         params=params, timeout=8)
+        if not r.ok:
+            return []
+        items = r.json().get("data", [])
+        results = []
+        for item in items:
+            abstract = item.get("abstract") or ""
+            if not abstract:
+                continue
+            doi = (item.get("externalIds") or {}).get("DOI", "")
+            url = f"https://doi.org/{doi}" if doi else f"https://www.semanticscholar.org/paper/{item.get('paperId','')}"
+            results.append({
+                "source": "📄 学术论文",
+                "title":  item.get("title", ""),
+                "year":   item.get("year", ""),
+                "text":   abstract[:300],
+                "url":    url,
+            })
+        return results
+    except Exception:
+        return []
 
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        params  = {"q": search_query, "kl": "cn-zh"}
-        r = requests.get("https://html.duckduckgo.com/html/", params=params, headers=headers, timeout=8)
-        
-        from html.parser import HTMLParser
 
-        class DDGParser(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.results = []
-                self._in_snippet = False
-                self._current = ""
+def _search_wikipedia(query: str, max_results: int = 2) -> list[dict]:
+    """搜索中文维基百科摘要"""
+    try:
+        params = {"action": "query", "list": "search", "srsearch": query,
+                  "srlimit": max_results, "format": "json", "uselang": "zh"}
+        r = requests.get("https://zh.wikipedia.org/w/api.php", params=params, timeout=8)
+        if not r.ok:
+            return []
+        items = r.json().get("query", {}).get("search", [])
+        results = []
+        for item in items:
+            snippet = item.get("snippet", "").replace('<span class="searchmatch">', "").replace("</span>", "")
+            if not snippet:
+                continue
+            title = item.get("title", "")
+            results.append({
+                "source": "📖 维基百科",
+                "title":  title,
+                "year":   "",
+                "text":   snippet[:300],
+                "url":    f"https://zh.wikipedia.org/wiki/{requests.utils.quote(title)}",
+            })
+        return results
+    except Exception:
+        return []
 
-            def handle_starttag(self, tag, attrs):
-                attrs_dict = dict(attrs)
-                if tag == "a" and "result__snippet" in attrs_dict.get("class", ""):
-                    self._in_snippet = True
-                    self._current = ""
 
-            def handle_endtag(self, tag):
-                if self._in_snippet and tag == "a":
-                    text = self._current.strip()
-                    if text:
-                        self.results.append(text)
-                    self._in_snippet = False
+def search_for_agent(topic: str, agent_name: str, agent_prompt: str) -> str:
+    """为特定角色搜索支持其立场的证据，返回带来源标注的文本"""
+    try:
+        # 让 AI 生成针对该角色立场的搜索关键词
+        kw_prompt = f"""议题：{topic}
+你的角色立场：{agent_prompt[:100]}
+请生成2个英文搜索关键词（用于学术搜索）和1个中文关键词（用于百科搜索），支持你的立场。
+格式：
+英文1: xxx
+英文2: xxx
+中文: xxx"""
+        kw_resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": kw_prompt}],
+            temperature=0.3, max_tokens=80,
+        ).choices[0].message.content.strip()
 
-            def handle_data(self, data):
-                if self._in_snippet:
-                    self._current += data
+        en_kws, zh_kw = [], topic
+        for line in kw_resp.splitlines():
+            if line.startswith("英文"):
+                kw = line.split(":", 1)[-1].strip()
+                if kw:
+                    en_kws.append(kw)
+            elif line.startswith("中文"):
+                zh_kw = line.split(":", 1)[-1].strip() or topic
 
-        parser = DDGParser()
-        parser.feed(r.text)
+        all_results = []
+        for kw in en_kws[:2]:
+            all_results.extend(_search_semantic_scholar(kw, max_results=2))
+        all_results.extend(_search_wikipedia(zh_kw, max_results=2))
 
-        summaries = [f"• {s}" for s in parser.results[:max_results]]
-        return "\n".join(summaries) if summaries else "未找到相关信息"
+        if not all_results:
+            return ""
+
+        lines = []
+        for item in all_results[:4]:
+            year = f"（{item['year']}）" if item["year"] else ""
+            lines.append(f"{item['source']} [{item['title']}{year}]({item['url']})\n  {item['text']}")
+        return "\n\n".join(lines)
     except Exception as e:
-        return f"搜索功能暂时不可用：{str(e)}"
+        return ""
 
 # ===================== 登录拦截 =====================
 if not render_auth_page():
@@ -347,15 +398,19 @@ def format_history_full(hist):
             lines.append(f"第{x['round']}轮 - 【用户插嘴{x.get('target','')}】：{x['content']}\n\n")
     return "".join(lines)
 
-def call_llm(prompt, history_context="", max_tokens=400, round_num=None):
+def call_llm(prompt, history_context="", max_tokens=400, round_num=None, agent_name=None):
     context = f"核心辩论议题：{st.session_state.topic}\n"
     if st.session_state.user_context:
         context += f"用户补充条件：{st.session_state.user_context}\n"
-    
-    # 添加当前轮次的搜索结果作为背景信息
-    if round_num and st.session_state.get('search_results') and round_num in st.session_state.search_results:
-        context += f"【本轮网络搜索参考信息】\n{st.session_state.search_results[round_num]}\n\n"
-    
+
+    # 优先用该角色专属的搜索结果
+    search_key = f"{round_num}_{agent_name}" if agent_name else round_num
+    search_data = st.session_state.get("search_results", {})
+    if search_key and search_key in search_data and search_data[search_key]:
+        context += f"【本轮学术参考资料（请引用来支撑你的论点）】\n{search_data[search_key]}\n\n"
+    elif round_num and round_num in search_data and search_data[round_num]:
+        context += f"【本轮参考资料】\n{search_data[round_num]}\n\n"
+
     if history_context:
         context += f"近期辩论内容：\n{history_context}\n"
     context += f"你的任务：{prompt}"
@@ -492,18 +547,12 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("### 🔍 网页搜索")
+    st.markdown("### 🔍 学术搜索")
     st.session_state.enable_search = st.checkbox(
-        "启用网页搜索辅助辩论",
+        "启用学术资料搜索",
         value=st.session_state.enable_search,
-        help="启用后，AI会在每轮辩论（包括反驳）前搜索相关网络信息，以提供更充分的论据支持"
+        help="每个角色会根据自己的立场，从 Semantic Scholar 和维基百科检索学术资料作为论据支撑"
     )
-    if st.session_state.search_results and st.session_state.enable_search:
-        with st.expander("查看各轮搜索结果"):
-            for round_num, results in sorted(st.session_state.search_results.items()):
-                st.markdown(f"**第{round_num}轮**：")
-                st.markdown(results)
-                st.markdown("---")
 
     st.markdown("---")
     st.markdown("### 💾 导出与历史")
@@ -552,20 +601,23 @@ if run_debate:
 
     st.subheader(f"📢 第{r}轮辩论")
 
-    if st.session_state.enable_search:
-        with st.spinner("🔍 正在搜索网络资料以辅助辩论..."):
-            search_target = user_speech['content'] if user_speech else None
-            st.session_state.search_results[r] = search_web(st.session_state.topic, target_content=search_target)
-        if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
-            with st.expander(f"🌐 第{r}轮网络搜索参考信息", expanded=False):
-                st.markdown(st.session_state.search_results[r])
-
     if user_speech:
-        st.info(f"🙋 用户发言（对象：{user_speech['target']}）：{user_speech['content']}")
+        st.info(f"� 用户发言（对象：{user_speech['target']}）：{user_speech['content']}")
 
     batch = []
     for agent in st.session_state.custom_agents:
         st.markdown(f"### 🗣 {agent['name']}")
+
+        # 每个角色单独搜索支持自己立场的学术资料
+        agent_search_key = f"{r}_{agent['name']}"
+        if st.session_state.enable_search:
+            with st.spinner(f"� {agent['name']} 正在检索学术资料..."):
+                refs = search_for_agent(st.session_state.topic, agent["name"], agent["prompt"])
+                st.session_state.search_results[agent_search_key] = refs
+            if refs:
+                with st.expander(f"📚 {agent['name']} 的参考来源", expanded=False):
+                    st.markdown(refs)
+
         with st.spinner("思考中..."):
             if user_speech:
                 is_targeted = (user_speech["target"] == agent["name"] or user_speech["target"] == "全体")
@@ -576,7 +628,7 @@ if run_debate:
                 )
             else:
                 prompt = get_debate_prompt(agent["prompt"], is_first_round=is_first)
-            content = call_llm(prompt, hist_ctx, round_num=r)
+            content = call_llm(prompt, hist_ctx, round_num=r, agent_name=agent["name"])
         st.markdown(content)
         st.divider()
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
@@ -597,16 +649,6 @@ if interrupt:
     batch          = []
     current_target = last_speeches[-1] if last_speeches else None
 
-    if st.session_state.enable_search and current_target:
-        with st.spinner("🔍 正在搜索反驳资料..."):
-            st.session_state.search_results[r] = search_web(
-                st.session_state.topic,
-                target_content=current_target["content"]
-            )
-        if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
-            with st.expander(f"🌐 第{r}轮反驳搜索参考信息", expanded=False):
-                st.markdown(st.session_state.search_results[r])
-
     for _ in range(st.session_state.interrupt_rounds):
         if not current_target:
             break
@@ -615,11 +657,22 @@ if interrupt:
             break
         attacker = random.choice(other_agents)
         st.markdown(f"### ⚡ {attacker['name']} 打断 {current_target['name']}")
+
+        agent_search_key = f"{r}_{attacker['name']}"
+        if st.session_state.enable_search:
+            with st.spinner(f"🔍 {attacker['name']} 正在检索反驳资料..."):
+                refs = search_for_agent(st.session_state.topic, attacker["name"], attacker["prompt"])
+                st.session_state.search_results[agent_search_key] = refs
+            if refs:
+                with st.expander(f"📚 {attacker['name']} 的参考来源", expanded=False):
+                    st.markdown(refs)
+
         with st.spinner("组织语言中..."):
             content = call_llm(
                 get_interrupt_prompt(attacker["prompt"], current_target["name"], current_target["content"][:300]),
                 hist_ctx,
-                round_num=r
+                round_num=r,
+                agent_name=attacker["name"],
             )
         st.markdown(content)
         st.divider()
