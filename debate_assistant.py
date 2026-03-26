@@ -3,55 +3,44 @@ from openai import OpenAI
 import json
 import os
 import random
+import requests
 from datetime import datetime
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from dotenv import load_dotenv
 from auth import render_auth_page, render_admin_panel, logout
+from github_storage import (
+    load_agent_config as gh_load_agent_config,
+    save_agent_config as gh_save_agent_config,
+    load_debate, save_debate, delete_debate, list_debates,
+    load_feedback, save_feedback as gh_save_feedback,
+)
 
 load_dotenv()
 
 # ===================== 网页搜索功能 =====================
 def search_web(topic: str, max_results: int = 5, target_content: str = None):
-    """
-    搜索辩论议题相关的网络信息
-    topic: 辩论议题
-    max_results: 最大结果数
-    target_content: 目标内容（用于针对性搜索，如反驳某个观点）
-    返回搜索结果的摘要
-    """
+    """用 DuckDuckGo 搜索辩论相关信息，无需 API key"""
     try:
-        # 构建搜索查询
         if target_content:
-            # 针对特定内容进行搜索（如反驳观点）
             search_query = f"{topic} {target_content[:50]} 反驳 数据 案例"
-            intent = f"针对'{target_content[:30]}...'这个观点，寻找反驳论据和相关数据"
-            expected = "返回可以反驳或支持该观点的具体数据、案例和研究"
         else:
-            # 搜索议题相关的各方观点
             search_query = f"{topic} 观点 争议 论据"
-            intent = "收集辩论议题相关的各方观点、数据支持和争议点"
-            expected = "返回包含正反双方观点、相关数据、案例和争议点的搜索结果"
-        
-        # 使用web_search工具搜索
-        results = web_search(
-            query=search_query,
-            intent=intent,
-            expected=expected,
-            num=max_results
-        )
-        
-        # 提取关键信息
+
+        params = {"q": search_query, "format": "json", "no_html": "1", "no_redirect": "1"}
+        r = requests.get("https://api.duckduckgo.com/", params=params, timeout=8)
+        data = r.json()
+
         summaries = []
-        if results and isinstance(results, list):
-            for item in results[:max_results]:
-                if isinstance(item, dict):
-                    title = item.get('title', '')
-                    snippet = item.get('snippet', '')
-                    url = item.get('url', '')
-                    if snippet:
-                        summaries.append(f"• {title}\n  {snippet}\n")
-        
+        # RelatedTopics 是 DDG 即时答案 API 的主要结果
+        for item in data.get("RelatedTopics", [])[:max_results]:
+            if isinstance(item, dict) and item.get("Text"):
+                summaries.append(f"• {item['Text']}\n")
+
+        # AbstractText 作为补充
+        if data.get("AbstractText"):
+            summaries.insert(0, f"• {data['AbstractText']}\n")
+
         return "\n".join(summaries) if summaries else "未找到相关信息"
     except Exception as e:
         return f"搜索功能暂时不可用：{str(e)}"
@@ -65,10 +54,7 @@ API_KEY  = os.getenv("API_KEY",  "your-api-key-here")
 BASE_URL = os.getenv("BASE_URL", "https://api.siliconflow.cn/v1")
 MODEL    = os.getenv("MODEL",    "deepseek-ai/DeepSeek-V3.2")
 
-CURRENT_USER   = st.session_state.get("current_user", "guest")
-HISTORY_FOLDER = os.path.join("debate_history", CURRENT_USER)
-if not os.path.exists(HISTORY_FOLDER):
-    os.makedirs(HISTORY_FOLDER)
+CURRENT_USER = st.session_state.get("current_user", "guest")
 
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
@@ -103,10 +89,9 @@ for k, v in defaults.items():
 
 # ===================== 角色配置 =====================
 def load_agent_config():
-    cfg = f"agent_config_{st.session_state.get('current_user','guest')}.json"
-    if os.path.exists(cfg):
-        with open(cfg, "r", encoding="utf-8") as f:
-            return json.load(f)
+    data = gh_load_agent_config(st.session_state.get("current_user", "guest"))
+    if data:
+        return data
     return [
         {"name": "支持派",     "prompt": "你是立场鲜明的支持派，说话像真实大学生一样自然、有逻辑、有情绪，但不偏激。先承接上一轮内容，针对性反驳对方，再讲自己的观点。核心理由、关键结论必须加粗。"},
         {"name": "反对派",     "prompt": "你是清醒理性的反对派，说话像认真思考的学生，指出问题一针见血。先针对性反驳对方上一轮观点，再提出自己的看法。核心理由、风险、弊端必须加粗。"},
@@ -115,9 +100,7 @@ def load_agent_config():
     ]
 
 def save_agent_config(agents):
-    cfg = f"agent_config_{st.session_state.get('current_user','guest')}.json"
-    with open(cfg, "w", encoding="utf-8") as f:
-        json.dump(agents, f, ensure_ascii=False, indent=2)
+    gh_save_agent_config(st.session_state.get("current_user", "guest"), agents)
 
 if not st.session_state.custom_agents:
     st.session_state.custom_agents = load_agent_config()
@@ -193,10 +176,8 @@ def get_user_speech_prompt(agent_prompt, agent_name, target_name, user_content, 
 
 # ===================== 存储函数 =====================
 def auto_save():
-    """每轮结束后静默自动保存，覆盖同一议题的上次记录"""
     if not st.session_state.topic or not st.session_state.debate_history:
         return
-    # 用固定文件名（议题key），每次覆盖，不产生重复文件
     topic_key = st.session_state.topic[:20].replace(" ","_").replace("？","_").replace("?","_")
     filename  = f"auto_{topic_key}.json"
     data = {
@@ -207,8 +188,7 @@ def auto_save():
         "debate_content": st.session_state.debate_history,
         "agents_used":  st.session_state.custom_agents,
     }
-    with open(os.path.join(HISTORY_FOLDER, filename), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_debate(CURRENT_USER, filename, data)
 
 def save_debate_history():
     if not st.session_state.topic or not st.session_state.debate_history:
@@ -224,17 +204,14 @@ def save_debate_history():
         "debate_content": st.session_state.debate_history,
         "agents_used":  st.session_state.custom_agents,
     }
-    with open(os.path.join(HISTORY_FOLDER, filename), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_debate(CURRENT_USER, filename, data)
     return filename
 
 def load_debate_history(filename):
-    path = os.path.join(HISTORY_FOLDER, filename)
-    if not os.path.exists(path):
+    data = load_debate(CURRENT_USER, filename)
+    if not data:
         st.error("记录不存在")
         return
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
     st.session_state.topic              = data["topic"]
     st.session_state.user_context       = data["user_context"]
     st.session_state.debate_round       = data["debate_round"]
@@ -246,28 +223,26 @@ def load_debate_history(filename):
     st.rerun()
 
 def get_all_history():
-    files = [f for f in os.listdir(HISTORY_FOLDER) if f.endswith(".json")]
+    files = list_debates(CURRENT_USER)
     files.sort(reverse=True)
     return files
 
 def get_history_label(filename):
-    path = os.path.join(HISTORY_FOLDER, filename)
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = load_debate(CURRENT_USER, filename)
+        if not data:
+            return filename
         prefix = "🔄 " if filename.startswith("auto_") else ""
         return f"{prefix}{data.get('topic','未知议题')[:16]}  [{data.get('create_time','')[:16]}]"
     except Exception:
         return filename
 
 def delete_history(filename):
-    path = os.path.join(HISTORY_FOLDER, filename)
-    if os.path.exists(path):
-        os.remove(path)
-        if st.session_state.current_history_id == filename:
-            for k, v in {"topic":"","user_context":"","debate_history":[],"debate_round":0,"current_history_id":None}.items():
-                st.session_state[k] = v
-        st.rerun()
+    delete_debate(CURRENT_USER, filename)
+    if st.session_state.current_history_id == filename:
+        for k, v in {"topic":"","user_context":"","debate_history":[],"debate_round":0,"current_history_id":None}.items():
+            st.session_state[k] = v
+    st.rerun()
 
 # ===================== 导出 Word =====================
 def export_to_word():
@@ -304,23 +279,15 @@ def export_to_word():
 
 
 # ===================== 意见反馈 =====================
-FEEDBACK_FILE = "feedback.json"
-
 def save_feedback(content: str):
-    feedbacks = []
-    if os.path.exists(FEEDBACK_FILE):
-        with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
-            feedbacks = json.load(f)
+    feedbacks = load_feedback()
     feedbacks.append({
         "user":    CURRENT_USER,
         "time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "content": content,
         "read":    False,
     })
-    tmp = FEEDBACK_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(feedbacks, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, FEEDBACK_FILE)
+    gh_save_feedback(feedbacks)
 
 def render_feedback_box():
     with st.expander("💬 意见反馈", expanded=False):

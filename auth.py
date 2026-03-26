@@ -10,23 +10,22 @@ import json
 import os
 import bcrypt
 import streamlit as st
+from github_storage import load_users, save_users, load_feedback, save_feedback as gh_save_feedback
 
-USERS_FILE = "users.json"
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+
+try:
+    ADMIN_USER = st.secrets["ADMIN_USER"]
+except Exception:
+    pass
 
 
 def _load_users() -> dict:
-    if not os.path.exists(USERS_FILE):
-        return {}
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_users()
 
 
 def _save_users(users: dict):
-    tmp = USERS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, USERS_FILE)
+    save_users(users)
 
 
 def register(username: str, password: str) -> tuple[bool, str]:
@@ -69,24 +68,22 @@ def logout():
 
 
 def _get_usage_stats() -> dict:
-    import glob
     from collections import defaultdict
-    base = "debate_history"
+    from github_storage import load_debate, list_debates, load_users
     stats = {
         "total_users": 0, "total_debates": 0, "total_rounds": 0,
         "user_debate_counts": {}, "daily_counts": defaultdict(int),
     }
-    if not os.path.exists(base):
-        return stats
-    user_dirs = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
-    stats["total_users"] = len(user_dirs)
-    for user in user_dirs:
-        files = glob.glob(os.path.join(base, user, "*.json"))
+    users = load_users()
+    stats["total_users"] = len(users)
+    for user in users:
+        files = list_debates(user)
         count = 0
-        for fp in files:
+        for fname in files:
             try:
-                with open(fp, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = load_debate(user, fname)
+                if not data:
+                    continue
                 stats["total_rounds"] += data.get("debate_round", 0)
                 date = data.get("create_time", "")[:10]
                 if date:
@@ -152,12 +149,10 @@ def render_admin_panel():
                             st.rerun()
 
         with tab_feedback:
-            FEEDBACK_FILE = "feedback.json"
-            if not os.path.exists(FEEDBACK_FILE):
+            feedbacks = load_feedback()
+            if not feedbacks:
                 st.info("暂无反馈")
             else:
-                with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
-                    feedbacks = json.load(f)
                 unread = sum(1 for x in feedbacks if not x.get("read"))
                 st.caption(f"共 {len(feedbacks)} 条反馈，{unread} 条未读")
                 for i, fb in enumerate(reversed(feedbacks)):
@@ -168,10 +163,7 @@ def render_admin_panel():
                             if st.button("标为已读", key=f"read_{i}"):
                                 idx = len(feedbacks) - 1 - i
                                 feedbacks[idx]["read"] = True
-                                tmp = FEEDBACK_FILE + ".tmp"
-                                with open(tmp, "w", encoding="utf-8") as f:
-                                    json.dump(feedbacks, f, ensure_ascii=False, indent=2)
-                                os.replace(tmp, FEEDBACK_FILE)
+                                gh_save_feedback(feedbacks)
                                 st.rerun()
 
 
@@ -208,7 +200,9 @@ def render_auth_page() -> bool:
             else:
                 ok, msg = register(u2, p2)
                 if ok:
-                    st.success(msg + "，请切换到登录标签")
+                    st.session_state.logged_in    = True
+                    st.session_state.current_user = u2.strip()
+                    st.rerun()
                 else:
                     st.error(msg)
 
