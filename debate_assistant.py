@@ -317,6 +317,105 @@ def delete_history(filename):
     st.rerun()
 
 # ===================== 导出 Word =====================
+def _add_markdown_paragraph(doc, prefix_bold: str, text: str):
+    """将含 **粗体** 的 Markdown 文本正确写入 Word 段落"""
+    import re
+    p = doc.add_paragraph()
+    if prefix_bold:
+        p.add_run(prefix_bold).bold = True
+    parts = re.split(r'\*\*(.+?)\*\*', text)
+    for i, part in enumerate(parts):
+        if part:
+            run = p.add_run(part)
+            run.bold = (i % 2 == 1)  # 奇数索引是被 ** 包裹的部分
+    return p
+
+
+def export_to_html() -> tuple:
+    if not st.session_state.topic or not st.session_state.debate_history:
+        return None, None
+    import re
+
+    def md_to_html(text: str) -> str:
+        # 粗体
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        # 换行
+        text = text.replace('\n', '<br>')
+        return text
+
+    rows = []
+    for r in range(1, st.session_state.debate_round + 1):
+        rows.append(f'<h2>第{r}轮</h2>')
+        for item in [x for x in st.session_state.debate_history if x["round"] == r]:
+            if item["type"] == "user_speech":
+                rows.append(f'<div class="user-speech"><strong>【用户插嘴 → {item.get("target","")}】</strong><br>{md_to_html(item["content"])}</div>')
+            else:
+                rows.append(f'<div class="speech"><div class="agent-name">{item["name"]}</div><div class="agent-content">{md_to_html(item["content"])}</div></div>')
+        rows.append('<hr>')
+
+    summary_html = ""
+    if st.session_state.last_summary:
+        summary_html = f'<h2>决策总结</h2><div class="summary">{md_to_html(st.session_state.last_summary)}</div>'
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>辩论记录：{st.session_state.topic}</title>
+<style>
+  body {{ font-family: "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #222; line-height: 1.8; }}
+  h1 {{ font-size: 1.6rem; border-bottom: 2px solid #4f8bf9; padding-bottom: 8px; }}
+  h2 {{ font-size: 1.2rem; color: #4f8bf9; margin-top: 2rem; }}
+  .meta {{ color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }}
+  .speech {{ background: #f8f9fa; border-left: 4px solid #4f8bf9; padding: 12px 16px; margin: 12px 0; border-radius: 4px; }}
+  .agent-name {{ font-weight: bold; margin-bottom: 6px; color: #333; }}
+  .user-speech {{ background: #fff8e1; border-left: 4px solid #ffc107; padding: 12px 16px; margin: 12px 0; border-radius: 4px; }}
+  .summary {{ background: #f0f7ff; border-left: 4px solid #28a745; padding: 16px; border-radius: 4px; }}
+  hr {{ border: none; border-top: 1px solid #eee; margin: 1.5rem 0; }}
+  @media print {{ body {{ margin: 20px; }} }}
+</style>
+</head>
+<body>
+<h1>辩论记录：{st.session_state.topic}</h1>
+<div class="meta">
+  创建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} &nbsp;|&nbsp;
+  辩论轮数：{st.session_state.debate_round}
+  {f'&nbsp;|&nbsp; 补充条件：{st.session_state.user_context}' if st.session_state.user_context else ''}
+</div>
+{''.join(rows)}
+{summary_html}
+<p style="color:#aaa;font-size:0.8rem;margin-top:2rem;">按 Ctrl+P 可打印或另存为 PDF</p>
+</body>
+</html>"""
+    filename = f"辩论记录_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+    return html.encode("utf-8"), filename
+
+
+def export_to_markdown() -> tuple:
+    if not st.session_state.topic or not st.session_state.debate_history:
+        return None, None
+    lines = [f"# 辩论记录：{st.session_state.topic}\n"]
+    lines.append(f"- 创建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"- 辩论轮数：{st.session_state.debate_round}")
+    if st.session_state.user_context:
+        lines.append(f"- 补充条件：{st.session_state.user_context}")
+    lines.append("\n---\n")
+    for r in range(1, st.session_state.debate_round + 1):
+        lines.append(f"## 第{r}轮\n")
+        for item in [x for x in st.session_state.debate_history if x["round"] == r]:
+            if item["type"] == "user_speech":
+                lines.append(f"**【用户插嘴 → {item.get('target','')}】**\n\n{item['content']}\n")
+            else:
+                lines.append(f"**{item['name']}**\n\n{item['content']}\n")
+        lines.append("---\n")
+    if st.session_state.last_summary:
+        lines.append("## 决策总结\n")
+        lines.append(st.session_state.last_summary)
+    content = "\n".join(lines)
+    filename = f"辩论记录_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    return content.encode("utf-8"), filename
+
+
 def export_to_word():
     import io
     if not st.session_state.topic or not st.session_state.debate_history:
@@ -333,17 +432,14 @@ def export_to_word():
     for r in range(1, st.session_state.debate_round + 1):
         doc.add_heading(f"第{r}轮", level=2)
         for item in [x for x in st.session_state.debate_history if x["round"] == r]:
-            p = doc.add_paragraph()
             if item["type"] == "user_speech":
-                p.add_run(f"【用户插嘴 → {item.get('target','')}】：").bold = True
-                p.add_run(item["content"].replace("**", ""))
+                _add_markdown_paragraph(doc, f"【用户插嘴 → {item.get('target','')}】：", item["content"])
             else:
-                p.add_run(f"{item['name']}：").bold = True
-                p.add_run(item["content"].replace("**", ""))
+                _add_markdown_paragraph(doc, f"{item['name']}：", item["content"])
             doc.add_paragraph()
     if st.session_state.last_summary:
         doc.add_heading("三、决策总结", level=1)
-        doc.add_paragraph(st.session_state.last_summary.replace("**", ""))
+        _add_markdown_paragraph(doc, "", st.session_state.last_summary)
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
@@ -556,13 +652,28 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 💾 导出与历史")
+    md_bytes, md_filename = export_to_markdown()
     word_bytes, word_filename = export_to_word()
-    if word_bytes:
-        st.download_button("📄 导出 Word", data=word_bytes, file_name=word_filename,
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                           use_container_width=True)
+    html_bytes, html_filename = export_to_html()
+    ec1, ec2 = st.columns(2)
+    with ec1:
+        if md_bytes:
+            st.download_button("📝 导出 MD", data=md_bytes, file_name=md_filename,
+                               mime="text/markdown", use_container_width=True)
+        else:
+            st.button("📝 导出 MD", disabled=True, use_container_width=True)
+    with ec2:
+        if word_bytes:
+            st.download_button("📄 导出 Word", data=word_bytes, file_name=word_filename,
+                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                               use_container_width=True)
+        else:
+            st.button("📄 导出 Word", disabled=True, use_container_width=True)
+    if html_bytes:
+        st.download_button("🌐 导出 HTML（可打印为PDF）", data=html_bytes, file_name=html_filename,
+                           mime="text/html", use_container_width=True)
     else:
-        st.button("📄 导出 Word", disabled=True, use_container_width=True)
+        st.button("🌐 导出 HTML", disabled=True, use_container_width=True)
 
     if st.button("💾 手动保存", use_container_width=True):
         f = save_debate_history()
