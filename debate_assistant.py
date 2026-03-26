@@ -616,22 +616,23 @@ with st.sidebar:
     st.markdown("### 🎭 角色管理")
     with st.expander("展开编辑角色"):
         for i, agent in enumerate(st.session_state.custom_agents):
-            c1, c2, c3 = st.columns([3, 6, 1])
-            with c1: new_name   = st.text_input(f"角色{i+1}名", value=agent["name"],   key=f"name_{i}")
-            with c2: new_prompt = st.text_area(f"角色{i+1}人设", value=agent["prompt"], key=f"prompt_{i}", height=80)
-            with c3:
-                if st.button("🗑️", key=f"del_{i}"):
-                    st.session_state.custom_agents.pop(i)
-                    save_agent_config(st.session_state.custom_agents)
-                    st.rerun()
-            st.session_state.custom_agents[i]["name"]   = new_name
-            st.session_state.custom_agents[i]["prompt"] = new_prompt
-        st.markdown("---")
+            st.text_input(f"角色{i+1}名", key=f"name_{i}",
+                          value=st.session_state.get(f"name_{i}", agent["name"]))
+            st.text_area(f"角色{i+1}人设", key=f"prompt_{i}",
+                         value=st.session_state.get(f"prompt_{i}", agent["prompt"]), height=80)
+            if st.button("🗑️ 删除此角色", key=f"del_{i}"):
+                st.session_state.custom_agents.pop(i)
+                save_agent_config(st.session_state.custom_agents)
+                st.rerun()
+            st.markdown("---")
         if st.button("➕ 添加角色", use_container_width=True):
             st.session_state.custom_agents.append({"name": "新角色", "prompt": "请输入人设"})
             save_agent_config(st.session_state.custom_agents)
             st.rerun()
         if st.button("💾 保存角色配置", use_container_width=True):
+            for i in range(len(st.session_state.custom_agents)):
+                st.session_state.custom_agents[i]["name"]   = st.session_state.get(f"name_{i}", st.session_state.custom_agents[i]["name"])
+                st.session_state.custom_agents[i]["prompt"] = st.session_state.get(f"prompt_{i}", st.session_state.custom_agents[i]["prompt"])
             save_agent_config(st.session_state.custom_agents)
             st.success("已保存")
 
@@ -651,31 +652,35 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("### 💾 导出与历史")
+    st.markdown("### � 导出")
     md_bytes, md_filename = export_to_markdown()
     word_bytes, word_filename = export_to_word()
     html_bytes, html_filename = export_to_html()
-    ec1, ec2 = st.columns(2)
+    ec1, ec2, ec3 = st.columns(3)
     with ec1:
         if md_bytes:
-            st.download_button("📝 导出 MD", data=md_bytes, file_name=md_filename,
+            st.download_button("📝 MD", data=md_bytes, file_name=md_filename,
                                mime="text/markdown", use_container_width=True)
         else:
-            st.button("📝 导出 MD", disabled=True, use_container_width=True)
+            st.button("📝 MD", disabled=True, use_container_width=True)
     with ec2:
         if word_bytes:
-            st.download_button("📄 导出 Word", data=word_bytes, file_name=word_filename,
+            st.download_button("📄 Word", data=word_bytes, file_name=word_filename,
                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                use_container_width=True)
         else:
-            st.button("📄 导出 Word", disabled=True, use_container_width=True)
-    if html_bytes:
-        st.download_button("🌐 导出 HTML（可打印为PDF）", data=html_bytes, file_name=html_filename,
-                           mime="text/html", use_container_width=True)
-    else:
-        st.button("🌐 导出 HTML", disabled=True, use_container_width=True)
+            st.button("📄 Word", disabled=True, use_container_width=True)
+    with ec3:
+        if html_bytes:
+            st.download_button("🌐 HTML", data=html_bytes, file_name=html_filename,
+                               mime="text/html", use_container_width=True)
+        else:
+            st.button("🌐 HTML", disabled=True, use_container_width=True)
+    st.caption("🌐 HTML 文件用浏览器打开后，Ctrl+P 可转为 PDF")
 
-    if st.button("💾 手动保存", use_container_width=True):
+    st.markdown("---")
+    st.markdown("### 💾 历史记录")
+    if st.button("💾 手动保存当前", use_container_width=True):
         f = save_debate_history()
         if f: st.success("已保存")
 
@@ -685,8 +690,6 @@ with st.sidebar:
             st.session_state[k] = v
         st.rerun()
 
-    st.markdown("---")
-    st.markdown("### 📜 历史记录")
     histories = get_all_history()
     if histories:
         labels   = {f: get_history_label(f) for f in histories}
