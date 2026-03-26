@@ -174,6 +174,39 @@ def load_agent_config():
 def save_agent_config(agents):
     gh_save_agent_config(st.session_state.get("current_user", "guest"), agents)
 
+
+def auto_generate_agents(topic: str) -> list:
+    """根据辩题让 AI 自动生成角色列表"""
+    prompt = f"""辩论议题：{topic}
+
+请为这个议题生成4-5个立场鲜明的辩论角色，每个角色代表一种具体观点或路线。
+
+输出格式（严格按此格式，每个角色一块）：
+角色名: xxx
+人设: xxx（50字以内，说明立场、说话风格、核心论点方向，结尾加"核心论点必须加粗"）
+
+---"""
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7, max_tokens=600,
+        ).choices[0].message.content.strip()
+
+        agents = []
+        for block in resp.split("---"):
+            name, persona = "", ""
+            for line in block.strip().splitlines():
+                if line.startswith("角色名:"):
+                    name = line.split(":", 1)[-1].strip()
+                elif line.startswith("人设:"):
+                    persona = line.split(":", 1)[-1].strip()
+            if name and persona:
+                agents.append({"name": name, "prompt": persona})
+        return agents if agents else []
+    except Exception:
+        return []
+
 if not st.session_state.custom_agents:
     st.session_state.custom_agents = load_agent_config()
 
@@ -615,6 +648,19 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 🎭 角色管理")
     with st.expander("展开编辑角色"):
+        if st.session_state.topic:
+            if st.button("✨ 根据议题自动生成角色", use_container_width=True):
+                with st.spinner("AI 正在分析议题，生成角色中..."):
+                    generated = auto_generate_agents(st.session_state.topic)
+                if generated:
+                    st.session_state.custom_agents = generated
+                    save_agent_config(generated)
+                    st.success(f"已生成 {len(generated)} 个角色")
+                    st.rerun()
+                else:
+                    st.error("生成失败，请手动编辑")
+        else:
+            st.caption("输入议题后可自动生成角色")
         for i, agent in enumerate(st.session_state.custom_agents):
             st.text_input(f"角色{i+1}名", key=f"name_{i}",
                           value=st.session_state.get(f"name_{i}", agent["name"]))
