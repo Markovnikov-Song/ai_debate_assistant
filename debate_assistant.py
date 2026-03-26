@@ -19,7 +19,7 @@ from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from dotenv import load_dotenv
 
-from auth import render_auth_page, render_admin_panel, logout
+from auth import render_auth_page, render_admin_panel, render_admin_page, logout
 from github_storage import (
     load_agent_config as gh_load_agent_config,
     save_agent_config as gh_save_agent_config,
@@ -105,10 +105,10 @@ for _k, _v in _DEFAULTS.items():
 # ════════════════════════════════════════════════════════════════════
 
 _DEFAULT_AGENTS = [
-    {"name": "支持派",     "prompt": "你是立场鲜明的支持派，说话像真实大学生一样自然、有逻辑、有情绪，但不偏激。先承接上一轮内容，针对性反驳对方，再讲自己的观点。核心理由、关键结论必须加粗。"},
-    {"name": "反对派",     "prompt": "你是清醒理性的反对派，说话像认真思考的学生，指出问题一针见血。先针对性反驳对方上一轮观点，再提出自己的看法。核心理由、风险、弊端必须加粗。"},
-    {"name": "中立理性派", "prompt": "你是中立理性派，像客观分析的学长，不站队、只讲事实。指出双方合理与不合理的地方，语气温和自然。关键判断、核心差异必须加粗。"},
-    {"name": "长期视角派", "prompt": "你是长期视角观察者，站在未来、考研、就业、成长角度说话，像过来人给建议。结合长远发展点评当前辩论。长期影响、未来收益必须加粗。"},
+    {"name": "支持派",     "prompt": "你是立场鲜明的支持派，说话自然、有逻辑、有情绪，但不偏激。先承接上一轮内容，针对性反驳对方，再讲自己的观点。核心理由、关键结论必须加粗。"},
+    {"name": "反对派",     "prompt": "你是清醒理性的反对派，指出问题一针见血。先针对性反驳对方上一轮观点，再提出自己的看法。核心理由、风险、弊端必须加粗。"},
+    {"name": "中立理性派", "prompt": "你是中立理性派，不站队、只讲事实。指出双方合理与不合理的地方，语气温和客观。关键判断、核心差异必须加粗。"},
+    {"name": "长期视角派", "prompt": "你是长期视角观察者，站在未来发展和长远影响的角度分析，像过来人给建议。结合长远收益和潜在风险点评当前辩论。长期影响、未来收益必须加粗。"},
 ]
 
 def load_agent_config() -> list:
@@ -593,6 +593,16 @@ def render_feedback_box():
 # 主页面 UI
 # ════════════════════════════════════════════════════════════════════
 
+# 管理员直接显示控制台，不显示辩论界面
+if CURRENT_USER == _cfg("ADMIN_USER", "admin"):
+    with st.sidebar:
+        st.header("⚙️ 设置")
+        st.caption(f"👤 {CURRENT_USER}")
+        if st.button("登出", use_container_width=True):
+            logout()
+    render_admin_page()
+    st.stop()
+
 st.title("🎯 多智能体辩论助手")
 st.divider()
 
@@ -629,6 +639,8 @@ if has_history and not is_debating:
                      "last_summary": "", "pending_user_speech": None,
                      "search_results": {}}.items():
             st.session_state[k] = v
+        # 重置角色为默认，避免上一个议题的自定义角色污染新辩论
+        st.session_state.custom_agents = _DEFAULT_AGENTS
         st.rerun()
 
 if is_debating:

@@ -97,74 +97,158 @@ def _get_usage_stats() -> dict:
 
 
 def render_admin_panel():
+    """侧边栏用的折叠管理面板（普通用户不可见）"""
     if not is_admin():
         return
     with st.expander("🛡️ 管理员面板", expanded=False):
-        tab_stats, tab_users, tab_feedback = st.tabs(["📊 使用统计", "👥 用户管理", "💬 意见反馈"])
+        _render_admin_tabs()
 
-        with tab_stats:
-            stats = _get_usage_stats()
-            m1, m2, m3 = st.columns(3)
-            m1.metric("注册用户数", stats["total_users"])
-            m2.metric("总辩论场次", stats["total_debates"])
-            m3.metric("总辩论轮数", stats["total_rounds"])
-            if stats["user_debate_counts"]:
-                st.markdown("**各用户辩论场次**")
-                import pandas as pd
-                df_users = pd.DataFrame(
-                    [(u, c) for u, c in stats["user_debate_counts"].items()],
-                    columns=["用户", "场次"]
-                ).sort_values("场次", ascending=False)
-                st.bar_chart(df_users.set_index("用户"))
-            if stats["daily_counts"]:
-                st.markdown("**每日辩论场次趋势**")
-                import pandas as pd
-                df_daily = pd.DataFrame(
-                    sorted(stats["daily_counts"].items()),
-                    columns=["日期", "场次"]
-                ).set_index("日期")
-                st.line_chart(df_daily)
 
-        with tab_users:
-            users = _load_users()
-            st.caption(f"当前注册用户数：{len(users)}")
-            for uname in list(users.keys()):
-                c1, c2, c3 = st.columns([4, 3, 3])
-                with c1:
-                    st.text(uname)
-                with c2:
-                    new_pw = st.text_input("新密码", key=f"reset_{uname}", placeholder="留空不改")
-                    if st.button("重置", key=f"do_reset_{uname}"):
-                        if new_pw and len(new_pw) >= 6:
-                            users[uname]["password"] = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
-                            _save_users(users)
-                            st.success(f"{uname} 密码已重置")
-                        else:
-                            st.warning("密码至少 6 位")
-                with c3:
-                    if uname != ADMIN_USER:
-                        if st.button("删除", key=f"del_user_{uname}"):
-                            del users[uname]
-                            _save_users(users)
+def render_admin_page():
+    """管理员专属主页面，替代辩论界面"""
+    st.title("🛡️ 管理员控制台")
+    st.divider()
+    _render_admin_tabs()
+
+
+def _render_topic_wordcloud():
+    """收集所有用户的辩题，生成词云和频次统计"""
+    from github_storage import load_debate, list_debates, load_users
+    import pandas as pd
+
+    with st.spinner("正在收集议题数据..."):
+        users  = load_users()
+        topics = []
+        for user in users:
+            for fname in list_debates(user):
+                try:
+                    data = load_debate(user, fname)
+                    if data and data.get("topic"):
+                        topics.append(data["topic"])
+                except Exception:
+                    continue
+
+    if not topics:
+        st.info("暂无议题数据")
+        return
+
+    st.caption(f"共收集到 {len(topics)} 条议题记录（匿名）")
+
+    # 频次统计 Top 10
+    from collections import Counter
+    counter = Counter(topics)
+    top     = counter.most_common(10)
+    if top:
+        st.markdown("**热门议题 Top 10**")
+        df = pd.DataFrame(top, columns=["议题", "次数"])
+        st.bar_chart(df.set_index("议题"))
+
+    # 词云
+    try:
+        import jieba
+        import matplotlib.pyplot as plt
+        from wordcloud import WordCloud
+        import io
+
+        text = " ".join(jieba.cut(" ".join(topics)))
+
+        # 尝试找系统中文字体
+        font_candidates = [
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+            "C:/Windows/Fonts/msyh.ttc",
+        ]
+        font_path = next((f for f in font_candidates if os.path.exists(f)), None)
+
+        wc = WordCloud(
+            font_path=font_path,
+            width=800, height=400,
+            background_color="white",
+            max_words=80,
+            colormap="Blues",
+        ).generate(text)
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.imshow(wc, interpolation="bilinear")
+        ax.axis("off")
+        st.markdown("**议题词云**")
+        st.pyplot(fig)
+        plt.close(fig)
+    except Exception as e:
+        st.warning(f"词云生成失败：{e}，请确认已安装 wordcloud 和 jieba")
+
+
+def _render_admin_tabs():
+    """管理员面板内容（供侧边栏和主页面复用）"""
+    tab_stats, tab_users, tab_feedback, tab_topics = st.tabs(["📊 使用统计", "👥 用户管理", "💬 意见反馈", "☁️ 议题词云"])
+
+    with tab_stats:
+        stats = _get_usage_stats()
+        m1, m2, m3 = st.columns(3)
+        m1.metric("注册用户数", stats["total_users"])
+        m2.metric("总辩论场次", stats["total_debates"])
+        m3.metric("总辩论轮数", stats["total_rounds"])
+        if stats["user_debate_counts"]:
+            st.markdown("**各用户辩论场次**")
+            import pandas as pd
+            df_users = pd.DataFrame(
+                [(u, c) for u, c in stats["user_debate_counts"].items()],
+                columns=["用户", "场次"]
+            ).sort_values("场次", ascending=False)
+            st.bar_chart(df_users.set_index("用户"))
+        if stats["daily_counts"]:
+            st.markdown("**每日辩论场次趋势**")
+            import pandas as pd
+            df_daily = pd.DataFrame(
+                sorted(stats["daily_counts"].items()),
+                columns=["日期", "场次"]
+            ).set_index("日期")
+            st.line_chart(df_daily)
+
+    with tab_users:
+        users = _load_users()
+        st.caption(f"当前注册用户数：{len(users)}")
+        for uname in list(users.keys()):
+            c1, c2, c3 = st.columns([4, 3, 3])
+            with c1:
+                st.text(uname)
+            with c2:
+                new_pw = st.text_input("新密码", key=f"reset_{uname}", placeholder="留空不改")
+                if st.button("重置", key=f"do_reset_{uname}"):
+                    if new_pw and len(new_pw) >= 6:
+                        users[uname]["password"] = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()
+                        _save_users(users)
+                        st.success(f"{uname} 密码已重置")
+                    else:
+                        st.warning("密码至少 6 位")
+            with c3:
+                if uname != ADMIN_USER:
+                    if st.button("删除", key=f"del_user_{uname}"):
+                        del users[uname]
+                        _save_users(users)
+                        st.rerun()
+
+    with tab_feedback:
+        feedbacks = load_feedback()
+        if not feedbacks:
+            st.info("暂无反馈")
+        else:
+            unread = sum(1 for x in feedbacks if not x.get("read"))
+            st.caption(f"共 {len(feedbacks)} 条反馈，{unread} 条未读")
+            for i, fb in enumerate(reversed(feedbacks)):
+                tag = "🔴 未读" if not fb.get("read") else "✅ 已读"
+                with st.expander(f"{tag}  {fb['user']}  {fb['time']}", expanded=not fb.get("read")):
+                    st.write(fb["content"])
+                    if not fb.get("read"):
+                        if st.button("标为已读", key=f"read_{i}"):
+                            idx = len(feedbacks) - 1 - i
+                            feedbacks[idx]["read"] = True
+                            gh_save_feedback(feedbacks)
                             st.rerun()
 
-        with tab_feedback:
-            feedbacks = load_feedback()
-            if not feedbacks:
-                st.info("暂无反馈")
-            else:
-                unread = sum(1 for x in feedbacks if not x.get("read"))
-                st.caption(f"共 {len(feedbacks)} 条反馈，{unread} 条未读")
-                for i, fb in enumerate(reversed(feedbacks)):
-                    tag = "🔴 未读" if not fb.get("read") else "✅ 已读"
-                    with st.expander(f"{tag}  {fb['user']}  {fb['time']}", expanded=not fb.get("read")):
-                        st.write(fb["content"])
-                        if not fb.get("read"):
-                            if st.button("标为已读", key=f"read_{i}"):
-                                idx = len(feedbacks) - 1 - i
-                                feedbacks[idx]["read"] = True
-                                gh_save_feedback(feedbacks)
-                                st.rerun()
+    with tab_topics:
+        _render_topic_wordcloud()
 
 
 def render_auth_page() -> bool:
