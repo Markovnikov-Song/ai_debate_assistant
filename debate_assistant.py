@@ -58,6 +58,26 @@ st.markdown("""
     p, li { font-size: 0.95rem !important; line-height: 1.6; }
     .stButton > button { width: 100%; }
 }
+/* 修复新版 Streamlit download_button 大图标卡片样式 */
+[data-testid="stDownloadButton"] > button {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0.4rem 0.75rem !important;
+    font-size: 0.9rem !important;
+    height: auto !important;
+    min-height: unset !important;
+}
+[data-testid="stDownloadButton"] > button > span {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 0.3rem !important;
+}
+[data-testid="stDownloadButton"] svg {
+    display: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
