@@ -747,21 +747,21 @@ with st.sidebar:
     word_bytes, word_fn = export_to_word()
     html_bytes, html_fn = export_to_html()
     if md_bytes:
-        st.download_button("导出 Markdown", data=md_bytes, file_name=md_fn,
+        st.download_button("导出为 Markdown 文件", data=md_bytes, file_name=md_fn,
                            mime="text/markdown", use_container_width=True)
     else:
-        st.button("导出 Markdown", disabled=True, use_container_width=True)
+        st.button("导出为 Markdown 文件", disabled=True, use_container_width=True)
     if word_bytes:
-        st.download_button("导出 Word", data=word_bytes, file_name=word_fn,
+        st.download_button("导出为 Word 文件", data=word_bytes, file_name=word_fn,
                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                            use_container_width=True)
     else:
-        st.button("导出 Word", disabled=True, use_container_width=True)
+        st.button("导出为 Word 文件", disabled=True, use_container_width=True)
     if html_bytes:
-        st.download_button("导出 HTML", data=html_bytes, file_name=html_fn,
+        st.download_button("导出为 HTML 文件", data=html_bytes, file_name=html_fn,
                            mime="text/html", use_container_width=True)
     else:
-        st.button("导出 HTML", disabled=True, use_container_width=True)
+        st.button("导出为 HTML 文件", disabled=True, use_container_width=True)
     st.caption("🌐 HTML 用浏览器打开后，Ctrl+P 可转为 PDF")
 
     # ── 历史记录 ──────────────────────────────────────────────────
