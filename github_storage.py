@@ -53,6 +53,8 @@ def gh_write(path: str, content, message: str = "update", sha: str = None):
     if sha:
         payload["sha"] = sha
     r = requests.put(_api(path), headers=_headers(), json=payload, timeout=10)
+    if not r.ok:
+        raise Exception(f"GitHub API error {r.status_code}: {r.text}")
     r.raise_for_status()
 
 
