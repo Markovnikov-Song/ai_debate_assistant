@@ -20,27 +20,47 @@ load_dotenv()
 
 # ===================== 网页搜索功能 =====================
 def search_web(topic: str, max_results: int = 5, target_content: str = None):
-    """用 DuckDuckGo 搜索辩论相关信息，无需 API key"""
+    """用 DuckDuckGo HTML 搜索，无需 API key"""
     try:
         if target_content:
             search_query = f"{topic} {target_content[:50]} 反驳 数据 案例"
         else:
             search_query = f"{topic} 观点 争议 论据"
 
-        params = {"q": search_query, "format": "json", "no_html": "1", "no_redirect": "1"}
-        r = requests.get("https://api.duckduckgo.com/", params=params, timeout=8)
-        data = r.json()
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        params  = {"q": search_query, "kl": "cn-zh"}
+        r = requests.get("https://html.duckduckgo.com/html/", params=params, headers=headers, timeout=8)
+        
+        from html.parser import HTMLParser
 
-        summaries = []
-        # RelatedTopics 是 DDG 即时答案 API 的主要结果
-        for item in data.get("RelatedTopics", [])[:max_results]:
-            if isinstance(item, dict) and item.get("Text"):
-                summaries.append(f"• {item['Text']}\n")
+        class DDGParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.results = []
+                self._in_snippet = False
+                self._current = ""
 
-        # AbstractText 作为补充
-        if data.get("AbstractText"):
-            summaries.insert(0, f"• {data['AbstractText']}\n")
+            def handle_starttag(self, tag, attrs):
+                attrs_dict = dict(attrs)
+                if tag == "a" and "result__snippet" in attrs_dict.get("class", ""):
+                    self._in_snippet = True
+                    self._current = ""
 
+            def handle_endtag(self, tag):
+                if self._in_snippet and tag == "a":
+                    text = self._current.strip()
+                    if text:
+                        self.results.append(text)
+                    self._in_snippet = False
+
+            def handle_data(self, data):
+                if self._in_snippet:
+                    self._current += data
+
+        parser = DDGParser()
+        parser.feed(r.text)
+
+        summaries = [f"• {s}" for s in parser.results[:max_results]]
         return "\n".join(summaries) if summaries else "未找到相关信息"
     except Exception as e:
         return f"搜索功能暂时不可用：{str(e)}"
@@ -79,9 +99,10 @@ defaults = {
     "debate_round": 0, "current_history_id": None,
     "custom_agents": [], "interrupt_rounds": 3,
     "last_summary": "",
-    "pending_user_speech": None,  # 待注入的用户插嘴 {target, content}
-    "search_results": {},  # 网络搜索结果，按轮次存储 {round_num: results}
-    "enable_search": True,  # 是否启用网页搜索
+    "pending_user_speech": None,
+    "search_results": {},
+    "enable_search": True,
+    "is_debating": False,  # 生成中标志，防止重复点击
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -371,11 +392,25 @@ st.session_state.user_context = st.text_area(
 # 操作按钮
 has_topic   = bool(st.session_state.topic)
 has_history = bool(st.session_state.debate_history)
+is_debating = st.session_state.is_debating
 
 btn_label = "🚀 开始辩论" if st.session_state.debate_round == 0 else "🔁 继续辩论"
-run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic, type="primary")
-interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history)
-do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history)
+run_debate = st.button(btn_label,   use_container_width=True, disabled=not has_topic or is_debating, type="primary")
+interrupt  = st.button("⚡ 自由辩", use_container_width=True, disabled=not has_history or is_debating)
+do_summary = st.button("📊 总结",   use_container_width=True, disabled=not has_history or is_debating)
+
+if has_history and not is_debating:
+    if st.button("📁 搁置并新建辩论", use_container_width=True):
+        save_debate_history()  # 先保存当前
+        for k, v in {"topic": "", "user_context": "", "debate_history": [],
+                     "debate_round": 0, "current_history_id": None,
+                     "last_summary": "", "pending_user_speech": None,
+                     "search_results": {}}.items():
+            st.session_state[k] = v
+        st.rerun()
+
+if is_debating:
+    st.info("⏳ AI 正在生成中，请稍候...")
 
 # ===================== 用户发言区（有辩论历史时显示） =====================
 if has_history:
@@ -508,27 +543,23 @@ with st.sidebar:
 
 # ===================== 辩论逻辑 =====================
 if run_debate:
+    st.session_state.is_debating = True
     st.session_state.debate_round += 1
     r        = st.session_state.debate_round
     is_first = (r == 1)
     hist_ctx = format_history_recent(st.session_state.debate_history)
-    user_speech = st.session_state.pending_user_speech  # 取出待处理的用户发言
+    user_speech = st.session_state.pending_user_speech
 
     st.subheader(f"📢 第{r}轮辩论")
 
-    # 如果启用了搜索，进行网页搜索
     if st.session_state.enable_search:
         with st.spinner("🔍 正在搜索网络资料以辅助辩论..."):
-            # 如果有用户发言，针对用户发言进行搜索
             search_target = user_speech['content'] if user_speech else None
             st.session_state.search_results[r] = search_web(st.session_state.topic, target_content=search_target)
-        
-        # 显示搜索结果
         if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
             with st.expander(f"🌐 第{r}轮网络搜索参考信息", expanded=False):
                 st.markdown(st.session_state.search_results[r])
 
-    # 如果有用户插嘴，先展示出来
     if user_speech:
         st.info(f"🙋 用户发言（对象：{user_speech['target']}）：{user_speech['content']}")
 
@@ -551,11 +582,13 @@ if run_debate:
         batch.append({"type": "agent_speech", "round": r, "name": agent["name"], "content": content})
 
     st.session_state.debate_history.extend(batch)
-    st.session_state.pending_user_speech = None  # 清除已处理的插嘴
+    st.session_state.pending_user_speech = None
+    st.session_state.is_debating = False
     auto_save()
     st.rerun()
 
 if interrupt:
+    st.session_state.is_debating = True
     st.session_state.debate_round += 1
     r             = st.session_state.debate_round
     hist_ctx      = format_history_recent(st.session_state.debate_history)
@@ -563,20 +596,17 @@ if interrupt:
     st.subheader(f"⚡ 第{r}轮（自由辩·打断/追问）")
     batch          = []
     current_target = last_speeches[-1] if last_speeches else None
-    
-    # 自由辩时进行针对性搜索
+
     if st.session_state.enable_search and current_target:
         with st.spinner("🔍 正在搜索反驳资料..."):
             st.session_state.search_results[r] = search_web(
-                st.session_state.topic, 
+                st.session_state.topic,
                 target_content=current_target["content"]
             )
-        
-        # 显示搜索结果
         if st.session_state.search_results[r] and "搜索功能暂时不可用" not in st.session_state.search_results[r]:
             with st.expander(f"🌐 第{r}轮反驳搜索参考信息", expanded=False):
                 st.markdown(st.session_state.search_results[r])
-    
+
     for _ in range(st.session_state.interrupt_rounds):
         if not current_target:
             break
@@ -597,6 +627,7 @@ if interrupt:
                       "content": f"（打断{current_target['name']}）{content}"})
         current_target = {"name": attacker["name"], "content": content}
     st.session_state.debate_history.extend(batch)
+    st.session_state.is_debating = False
     auto_save()
     st.rerun()
 
